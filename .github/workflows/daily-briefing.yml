@@ -1,0 +1,38 @@
+name: Daily News Briefing
+
+on:
+  schedule:
+    # 7:00 AM EST = 12:00 UTC (EST is UTC-5)
+    # During EDT (Mar–Nov), this fires at 8:00 AM local — adjust to "11 0" for 7 AM EDT
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    # Allows manual trigger from the GitHub Actions tab
+
+jobs:
+  send-briefing:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run briefing
+        env:
+          NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          USER_PHONE: ${{ secrets.USER_PHONE }}
+          USER_CARRIER: ${{ secrets.USER_CARRIER }}
+          USER_EMAIL: ${{ secrets.USER_EMAIL }}
+          SMTP_EMAIL: ${{ secrets.SMTP_EMAIL }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+        run: python main.py --now
