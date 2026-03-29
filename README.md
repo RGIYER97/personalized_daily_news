@@ -6,16 +6,38 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 
 ## Features
 
-- **News synthesizer** — Pulls headlines from NewsAPI (with RSS + Google News fallback) across four categories: Economic & Financial, Geopolitics, General News, and Technology. Google Gemini turns raw headlines into **blunt, factual summaries** (not a list of article titles).
-- **Two-pass quality loop** — Pass 1 summarizes what happened and why it matters; pass 2 checks for clickbait or title dumping and rewrites if needed.
-- **Stock watchlist** — One line per ticker for meaningful company news (earnings, deals, lawsuits, notable moves). Tick list is editable in `config.py`. If nothing notable turned up, the briefing says so.
-- **Sports desk** — ESPN for yesterday's results and today's schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
+- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). One Gemini call synthesizes all four topic sections into blunt, factual prose — not pasted article titles.
+- **Gemini reliability** — If one model hits a **429 rate limit**, the app automatically tries fallback models (`gemini-2.0-flash` → `gemini-2.0-flash-lite` → `gemini-1.5-flash`) and spaces out the news vs. stock API calls to reduce back-to-back throttling.
+- **Stock watchlist** — One line per ticker for meaningful company news. Edit `WATCHLIST_STOCKS` in `config.py`. If nothing notable, the briefing says so.
+- **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
 - **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
 - **GitHub Actions** — Scheduled daily run; no always-on laptop required.
 
 ## Briefing order
 
 Each run outputs: **Header → News → Stocks → Sports → footer.**
+
+## News sources: do you need to log in?
+
+**No extra credentials are required for RSS.** The app uses **public** feed URLs (headlines + short blurbs). That includes **WSJ**, **CNBC**, **NPR**, **BBC**, **NYT**, **Google News**, and sports data from **ESPN**.
+
+| What | Credentials? |
+|---|---|
+| WSJ / CNBC / NPR / BBC / NYT / Google News RSS | **None** — these are standard public RSS endpoints. An individual WSJ.com account does **not** unlock the RSS feeds in code; you are not signing in per request. |
+| NewsAPI | **Yes** — `NEWSAPI_KEY` in `.env` or GitHub Secrets (free tier available). |
+| Google Gemini (summaries) | **Yes** — `GEMINI_API_KEY`. Without it, news and stocks are mostly raw headlines. |
+
+Full article pages on publisher sites may still require a subscription in a browser; the briefing only uses what the RSS items expose.
+
+### Feeds used by category (RSS fallback / enrichment)
+
+Configured in `news_fetcher.py`:
+
+- **Economic & Financial:** WSJ US Business, WSJ Markets, BBC Business, NYT Business, CNBC top stories, Google News (business topic).
+- **Geopolitics / General News:** WSJ World, BBC World, NYT World, CNBC world, NPR top stories, BBC main feed, Google News US.
+- **Technology:** WSJ tech, BBC tech, NYT tech, CNBC tech, Google News (technology search).
+
+Stock tickers also use NewsAPI when configured, otherwise Google News RSS search per symbol.
 
 ## Project structure
 
@@ -49,8 +71,8 @@ Edit `.env`:
 
 | Variable | Purpose | Notes |
 |---|---|---|
-| `NEWSAPI_KEY` | [NewsAPI](https://newsapi.org) | Free tier; improves headline quality vs RSS-only |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | **Strongly recommended** — without it, news and stocks are mostly raw headlines |
+| `NEWSAPI_KEY` | [NewsAPI](https://newsapi.org) | Free tier; extra headlines beyond RSS |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | **Strongly recommended** — without it, news and stocks stay as raw headlines |
 | `USER_PHONE` | 10-digit US number | e.g. `2125551234` |
 | `USER_CARRIER` | Carrier slug | See table below (`tmobile`, `verizon`, …) |
 | `USER_EMAIL` | Your inbox | Email fallback recipient |
@@ -92,7 +114,7 @@ If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_da
 | Secret | Value |
 |---|---|
 | `NEWSAPI_KEY` | NewsAPI key |
-| `GEMINI_API_KEY` | Gemini key (needed for good summaries) |
+| `GEMINI_API_KEY` | Gemini key (needed for summaries and to cope with rate limits via fallback models) |
 | `USER_PHONE` | 10-digit number |
 | `USER_CARRIER` | e.g. `tmobile` |
 | `USER_EMAIL` | Your email |
@@ -100,6 +122,8 @@ If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_da
 | `SMTP_PASSWORD` | Gmail App Password |
 | `SMTP_HOST` | `smtp.gmail.com` |
 | `SMTP_PORT` | `587` |
+
+No WSJ or RSS-specific secrets are required.
 
 ### Verify
 
@@ -114,7 +138,7 @@ The workflow uses cron in UTC. Example: `0 12 * * *` ≈ 7:00 AM Eastern Standar
 
 ### News topics and lengths
 
-Edit `NEWS_TOPICS`: each entry has `query`, `length`, and `category` (feeds RSS/Google topic buckets).
+Edit `NEWS_TOPICS`: each entry has `query`, `length`, and `category` (which RSS bucket is used when NewsAPI is empty).
 
 ### Stock watchlist
 
