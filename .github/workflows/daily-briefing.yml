@@ -24,6 +24,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # Watchlist tickers live in config.py (WATCHLIST_STOCKS) — commit changes to update CI.
+
       - name: Run briefing
         env:
           NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}

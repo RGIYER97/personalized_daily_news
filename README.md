@@ -2,56 +2,65 @@
 
 A Python-based daily news and sports aggregator that runs every morning via GitHub Actions, synthesizes headlines with an LLM, and delivers a briefing via SMS or email — all using free services.
 
+Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news)
+
 ## Features
 
-- **News Synthesizer** — Pulls headlines from NewsAPI (with RSS fallback) across four categories: Economic & Financial, Geopolitics, General News, and Technology. Uses Google Gemini to synthesize them into concise summaries with configurable lengths.
-- **Sports Desk** — Checks ESPN for yesterday's results and today's schedule for: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, and Formula 1.
-- **Free SMS Delivery** — Sends texts via Email-to-SMS carrier gateways (no Twilio or paid service needed). Falls back to full email if the message is too long.
-- **GitHub Actions Automation** — Runs automatically at 7:00 AM EST every day via a cron workflow. No server or always-on laptop required.
+- **News synthesizer** — Pulls headlines from NewsAPI (with RSS + Google News fallback) across four categories: Economic & Financial, Geopolitics, General News, and Technology. Google Gemini turns raw headlines into **blunt, factual summaries** (not a list of article titles).
+- **Two-pass quality loop** — Pass 1 summarizes what happened and why it matters; pass 2 checks for clickbait or title dumping and rewrites if needed.
+- **Stock watchlist** — One line per ticker for meaningful company news (earnings, deals, lawsuits, notable moves). Tick list is editable in `config.py`. If nothing notable turned up, the briefing says so.
+- **Sports desk** — ESPN for yesterday's results and today's schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
+- **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
+- **GitHub Actions** — Scheduled daily run; no always-on laptop required.
 
-## Project Structure
+## Briefing order
+
+Each run outputs: **Header → News → Stocks → Sports → footer.**
+
+## Project structure
 
 ```
 main.py                              — Orchestrator and scheduler
-news_fetcher.py                      — News fetching (NewsAPI + RSS) and LLM synthesis
-sports_fetcher.py                    — ESPN scores and schedules
-notifier.py                         — SMS (Email-to-SMS gateway) and email delivery
-config.py                           — Centralized configuration (reads from .env)
-.env.example                        — Template showing all required variables
-.github/workflows/daily-briefing.yml — GitHub Actions cron workflow
+news_fetcher.py                      — News + stock headlines, Gemini synthesis
+sports_fetcher.py                   — ESPN scores and schedules
+notifier.py                          — SMS gateway + SMTP email
+config.py                            — Topics, watchlist, sports teams (.env for secrets)
+.env.example                         — Environment template
+.github/workflows/daily-briefing.yml — Cron + manual dispatch
 ```
 
 ## Setup
 
-### 1. Install Dependencies
+### 1. Install dependencies
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
+### 2. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your values:
+Edit `.env`:
 
-| Variable | Source | Cost |
+| Variable | Purpose | Notes |
 |---|---|---|
-| `NEWSAPI_KEY` | [newsapi.org](https://newsapi.org) | Free (100 req/day) |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | Free tier available |
-| `USER_PHONE` | Your 10-digit US phone number (e.g. `2125551234`) | — |
-| `USER_CARRIER` | Your carrier (see table below) | — |
-| `USER_EMAIL` | Your email (for fallback delivery) | — |
-| `SMTP_EMAIL` | Gmail address for sending | Free |
-| `SMTP_PASSWORD` | [Gmail App Password](https://myaccount.google.com/apppasswords) | Free |
+| `NEWSAPI_KEY` | [NewsAPI](https://newsapi.org) | Free tier; improves headline quality vs RSS-only |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | **Strongly recommended** — without it, news and stocks are mostly raw headlines |
+| `USER_PHONE` | 10-digit US number | e.g. `2125551234` |
+| `USER_CARRIER` | Carrier slug | See table below (`tmobile`, `verizon`, …) |
+| `USER_EMAIL` | Your inbox | Email fallback recipient |
+| `SMTP_EMAIL` | Gmail used to send | Often same as `USER_EMAIL` |
+| `SMTP_PASSWORD` | [Gmail App Password](https://myaccount.google.com/apppasswords) | Not your normal Gmail login password |
+| `SMTP_HOST` / `SMTP_PORT` | Usually `smtp.gmail.com` / `587` | |
 
-### Supported Carriers
+### Supported carriers (Email-to-SMS)
 
-| Carrier | `USER_CARRIER` value |
+| Carrier | `USER_CARRIER` |
 |---|---|
 | AT&T | `att` |
 | T-Mobile | `tmobile` |
@@ -66,109 +75,73 @@ Edit `.env` and fill in your values:
 | Xfinity Mobile | `xfinity` |
 | Visible | `visible` |
 
-### 3. Test Locally
+### 3. Test locally
 
 ```bash
 python main.py --now
 ```
 
-## GitHub Actions Setup (Recommended)
+## GitHub Actions (recommended)
 
-This is the best way to run the briefing daily without keeping your laptop on. GitHub Actions free tier gives you 2,000 minutes/month — this workflow uses ~1 minute per run.
+Uses ~1 minute per run; fits the free Actions allowance.
 
-### Step 1: Clone or push to GitHub
+### Use this repo
 
-If you already have this repo (e.g. [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news)), you only need to add secrets below.
+If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news), fork or clone it, then add **Settings → Secrets and variables → Actions** repository secrets:
 
-Otherwise:
-
-```bash
-git init
-git add .
-git commit -m "initial commit"
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
-git push -u origin main
-```
-
-Keep `.env` out of git — it is listed in `.gitignore`.
-
-### Step 2: Add Secrets
-
-Go to your repo on GitHub, then **Settings > Secrets and variables > Actions > New repository secret**.
-
-Add each of these as a separate secret:
-
-| Secret Name | Value |
+| Secret | Value |
 |---|---|
-| `NEWSAPI_KEY` | Your NewsAPI key |
-| `GEMINI_API_KEY` | Your Gemini API key |
-| `USER_PHONE` | Your 10-digit phone number (e.g. `2125551234`) |
-| `USER_CARRIER` | Your carrier (e.g. `tmobile`) |
-| `USER_EMAIL` | Your email address |
-| `SMTP_EMAIL` | Your Gmail address |
-| `SMTP_PASSWORD` | Your Gmail App Password |
+| `NEWSAPI_KEY` | NewsAPI key |
+| `GEMINI_API_KEY` | Gemini key (needed for good summaries) |
+| `USER_PHONE` | 10-digit number |
+| `USER_CARRIER` | e.g. `tmobile` |
+| `USER_EMAIL` | Your email |
+| `SMTP_EMAIL` | Gmail sender |
+| `SMTP_PASSWORD` | Gmail App Password |
 | `SMTP_HOST` | `smtp.gmail.com` |
 | `SMTP_PORT` | `587` |
 
-### Step 3: Verify It Works
+### Verify
 
-1. Go to the **Actions** tab in your GitHub repo
-2. Click **Daily News Briefing** in the left sidebar
-3. Click **Run workflow** > **Run workflow** (the green button)
-4. Watch the run complete — you should receive an SMS within a minute
+1. **Actions** → **Daily News Briefing** → **Run workflow**
+2. Confirm SMS or email arrives
 
-### Step 4: Done
+### Schedule (UTC)
 
-The workflow is scheduled to run automatically at **7:00 AM EST every day**. You can check past runs anytime under the Actions tab.
+The workflow uses cron in UTC. Example: `0 12 * * *` ≈ 7:00 AM Eastern Standard Time. During daylight time you may want `0 11 * * *` for 7:00 AM local — edit `.github/workflows/daily-briefing.yml`.
 
-**Adjusting the time:** Edit the cron expression in `.github/workflows/daily-briefing.yml`. GitHub Actions uses UTC:
+## Customization (all in `config.py`)
 
-```yaml
-schedule:
-  - cron: "0 12 * * *"   # 12:00 UTC = 7:00 AM EST
-  # - cron: "0 11 * * *" # 11:00 UTC = 7:00 AM EDT (daylight saving)
-```
+### News topics and lengths
 
-## Customization
+Edit `NEWS_TOPICS`: each entry has `query`, `length`, and `category` (feeds RSS/Google topic buckets).
 
-### News Topics & Summary Lengths
+### Stock watchlist
 
-Edit the `NEWS_TOPICS` dictionary in `config.py`:
+Edit `WATCHLIST_STOCKS` — list of ticker symbols as strings, e.g.:
 
 ```python
-NEWS_TOPICS = {
-    "Economic & Financial": {
-        "query": "economy OR finance OR stock market",
-        "length": "1 paragraph (4-5 sentences)",
-        "category": "business",
-    },
-    # Add or modify topics here...
-}
+WATCHLIST_STOCKS = ["COF", "AXP", "AMZN", "BRK.B", "COST", "GOOGL", "NFLX", "SPOT", "XOM"]
 ```
 
-### Sports Teams
+Commit and push when you change this file so GitHub Actions picks up the new list.
 
-Edit the `SPORTS_TEAMS` list in `config.py`. Each entry needs:
-- `name` — Display name
-- `sport` — One of: baseball, football, basketball, soccer, racing
-- `espn_slug` — ESPN league identifier (mlb, nfl, nba, esp.1, f1)
-- `espn_id` — ESPN team ID (use `None` for racing/F1)
+### Sports teams
 
-## How the Email-to-SMS Gateway Works
+Edit `SPORTS_TEAMS`: `name`, `sport`, `espn_slug`, `espn_id`.
 
-Every US carrier has a free email gateway that converts emails into text messages. The system sends an email to `<your-10-digit-number>@<carrier-gateway>` (e.g. `2125551234@tmomail.net` for T-Mobile), and it arrives as a regular SMS on your phone. No sign-up, API keys, or payment required — it just uses your existing Gmail SMTP credentials.
+## Email-to-SMS
 
-If the briefing is too long for SMS (>1500 chars), it automatically falls back to sending a full email to your `USER_EMAIL` instead.
+Email is sent to `<10-digit>@<carrier-gateway>` (e.g. `2125551234@tmomail.net`). That uses the same Gmail SMTP credentials as fallback email. Messages over ~1500 characters go to `USER_EMAIL` as full email instead.
 
-## Local Scheduler (Alternative)
-
-If you prefer running this on your own machine or server instead of GitHub Actions:
+## Local scheduler (alternative)
 
 ```bash
-# Runs the scheduler loop, sends briefing at SEND_TIME every day
 python main.py
+```
 
-# Or use cron directly
-# crontab -e
+Uses `SEND_TIME` from `.env` (EST). Or use cron:
+
+```bash
 0 12 * * * cd /path/to/project && /path/to/.venv/bin/python main.py --now
 ```
