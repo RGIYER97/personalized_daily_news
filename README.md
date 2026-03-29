@@ -76,16 +76,21 @@ python main.py --now
 
 This is the best way to run the briefing daily without keeping your laptop on. GitHub Actions free tier gives you 2,000 minutes/month — this workflow uses ~1 minute per run.
 
-### Step 1: Push to GitHub
+### Step 1: Clone or push to GitHub
+
+If you already have this repo (e.g. [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news)), you only need to add secrets below.
+
+Otherwise:
 
 ```bash
 git init
 git add .
 git commit -m "initial commit"
-gh repo create personal-news-dump --private --source=. --push
+git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+git push -u origin main
 ```
 
-Or push to an existing repo — just make sure `.env` is in `.gitignore` (it already is).
+Keep `.env` out of git — it is listed in `.gitignore`.
 
 ### Step 2: Add Secrets
 
