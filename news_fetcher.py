@@ -1,3 +1,4 @@
+import time
 import requests
 import feedparser
 from google import genai
@@ -5,6 +6,37 @@ from datetime import datetime, timedelta
 import pytz
 import config
 
+
+MAX_RETRIES = 3
+RETRY_DELAYS = [2, 5, 10]
+
+
+def _gemini_call(client, prompt: str) -> str | None:
+    """Call Gemini with retry + backoff. Returns text or None on failure."""
+    for attempt in range(MAX_RETRIES):
+        try:
+            resp = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt,
+            )
+            text = resp.text
+            if text and text.strip():
+                return text.strip()
+            print(f"  [LLM] Empty response on attempt {attempt + 1}")
+        except Exception as e:
+            print(f"  [LLM] Attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+
+        if attempt < MAX_RETRIES - 1:
+            delay = RETRY_DELAYS[attempt]
+            print(f"  [LLM] Retrying in {delay}s...")
+            time.sleep(delay)
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Headline fetching
+# ---------------------------------------------------------------------------
 
 def _fetch_newsapi_headlines(topic_cfg: dict) -> list[str]:
     """Fetch headlines from NewsAPI for a given topic config."""
@@ -19,7 +51,7 @@ def _fetch_newsapi_headlines(topic_cfg: dict) -> list[str]:
         "to": yesterday,
         "sortBy": "relevancy",
         "language": "en",
-        "pageSize": 15,
+        "pageSize": 10,
         "apiKey": config.NEWSAPI_KEY,
     }
     try:
@@ -50,7 +82,7 @@ _RSS_FEEDS = {
     "technology": [
         "https://feeds.bbci.co.uk/news/technology/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
-        "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGRqTXpJU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
+        "https://news.google.com/rss/search?q=technology&hl=en-US&gl=US&ceid=US:en",
     ],
 }
 
@@ -88,89 +120,142 @@ def _get_gemini_client():
     return genai.Client(api_key=config.GEMINI_API_KEY)
 
 
-def _synthesize_with_llm(client, topic_name: str, length: str, raw_headlines: list[str]) -> str:
-    """Use Gemini to synthesize headlines into a blunt, substantive briefing.
+# ---------------------------------------------------------------------------
+# News: single consolidated LLM call for ALL topics
+# ---------------------------------------------------------------------------
 
-    Runs a two-pass process:
-    1. Generate a summary from raw headlines.
-    2. Validate the summary — if it reads like a list of titles or ads,
-       the model rewrites it into a direct, factual summary.
-    """
-    if not raw_headlines:
-        return f"No recent headlines found for {topic_name}."
+def _build_raw_fallback(all_headlines: dict[str, list[str]]) -> str:
+    """Format raw headlines as fallback when the LLM is unavailable."""
+    sections = []
+    for topic_name, headlines in all_headlines.items():
+        if headlines:
+            lines = "\n".join(headlines[:4])
+            sections.append(f"📰 {topic_name}\n{lines}")
+        else:
+            sections.append(f"📰 {topic_name}\nNo recent headlines found.")
+    return "\n\n".join(sections)
+
+
+def fetch_news() -> str:
+    """Fetch headlines for all topics, then synthesize in ONE Gemini call."""
+    print("[News] Fetching headlines...")
+    client = _get_gemini_client()
+
+    all_headlines: dict[str, list[str]] = {}
+    for topic_name, topic_cfg in config.NEWS_TOPICS.items():
+        print(f"  Fetching: {topic_name}...")
+        headlines = _fetch_newsapi_headlines(topic_cfg)
+        if not headlines:
+            print(f"  Falling back to RSS for {topic_name}...")
+            headlines = _fetch_rss_headlines(topic_cfg)
+        all_headlines[topic_name] = headlines
 
     if client is None:
-        return "\n".join(raw_headlines[:5])
+        print("  [LLM] No GEMINI_API_KEY — returning raw headlines.")
+        return _build_raw_fallback(all_headlines)
 
-    headlines_text = "\n".join(raw_headlines)
+    # Build one combined prompt with all topics and their length constraints
+    topic_blocks = []
+    for topic_name, headlines in all_headlines.items():
+        length = config.NEWS_TOPICS[topic_name]["length"]
+        if headlines:
+            text = "\n".join(headlines)
+            topic_blocks.append(
+                f"=== SECTION: {topic_name} ===\n"
+                f"Length constraint: {length}\n"
+                f"Raw headlines:\n{text}"
+            )
+        else:
+            topic_blocks.append(
+                f"=== SECTION: {topic_name} ===\n"
+                f"Length constraint: {length}\n"
+                f"Raw headlines: NONE FOUND"
+            )
 
-    # --- Pass 1: Synthesize ---
-    synth_prompt = (
-        f"You are a senior news editor writing a morning briefing for a busy reader. "
-        f"Below are raw headlines and descriptions about '{topic_name}' from the last 24 hours.\n\n"
-        f"Raw material:\n{headlines_text}\n\n"
-        f"INSTRUCTIONS:\n"
-        f"- Write a blunt, factual summary of the most important developments.\n"
-        f"- State WHAT happened and WHY it matters. Do not just list article titles.\n"
-        f"- Use plain, direct language. No filler, no hype, no clickbait phrasing.\n"
-        f"- Combine related stories into single statements.\n"
-        f"- Omit trivial, celebrity, or unrelated stories that don't fit '{topic_name}'.\n"
-        f"- Do NOT use bullet points, numbered lists, or headings.\n"
-        f"- Length: {length}.\n"
-        f"- Do NOT start with 'Here is' or 'Here's' or any meta-commentary."
+    combined = "\n\n".join(topic_blocks)
+    topic_names = list(all_headlines.keys())
+
+    prompt = (
+        "You are a senior news editor writing a concise morning briefing.\n\n"
+        "Below are raw headlines grouped by section. For EACH section, write a "
+        "blunt, factual summary that obeys its length constraint.\n\n"
+        f"{combined}\n\n"
+        "STRICT RULES:\n"
+        "1. Output one section per topic. Start each with the section name on its own line "
+        f"(exactly: {', '.join(topic_names)}).\n"
+        "2. Under each section name, write the summary as plain prose paragraphs.\n"
+        "3. State WHAT happened and WHY it matters. Be specific: names, numbers, outcomes.\n"
+        "4. NEVER repeat or quote article titles. Rewrite everything in your own words.\n"
+        "5. NEVER include source names like 'BBC reports' or 'according to NYT'. Just state facts.\n"
+        "6. Omit trivial, celebrity, or off-topic stories.\n"
+        "7. No bullet points, no numbered lists, no markdown formatting.\n"
+        "8. If no headlines were found for a section, write 'No notable developments reported.'\n"
+        "9. Do NOT add any intro, closing, or meta-commentary.\n\n"
+        "Begin."
     )
 
-    try:
-        resp1 = client.models.generate_content(model="gemini-2.0-flash", contents=synth_prompt)
-        draft = resp1.text.strip()
-    except Exception as e:
-        print(f"  [LLM] Error in synthesis pass for '{topic_name}': {e}")
-        return "\n".join(raw_headlines[:3])
+    print("  [LLM] Synthesizing all news sections (1 call)...")
+    result = _gemini_call(client, prompt)
 
-    # --- Pass 2: Quality check and rewrite if needed ---
-    validate_prompt = (
-        f"You are a quality editor. Review the following news summary and determine if it "
-        f"is a genuine, informative summary or if it reads like a list of article titles, "
-        f"advertisements, or clickbait.\n\n"
-        f"Summary to review:\n\"{draft}\"\n\n"
-        f"RULES:\n"
-        f"- If the summary is substantive and informative, return it EXACTLY as-is.\n"
-        f"- If the summary contains article titles, clickbait phrasing, ad-like language, "
-        f"or lacks substance, rewrite it into a direct, factual summary.\n"
-        f"- The rewrite must state concrete facts: names, numbers, outcomes.\n"
-        f"- Length: {length}.\n"
-        f"- Output ONLY the final summary text. No commentary, no labels, no quotes around it."
-    )
+    if result:
+        # Parse the LLM output into labeled sections
+        sections = _parse_llm_sections(result, topic_names)
+        return "\n\n".join(f"📰 {name}\n{body}" for name, body in sections.items())
 
-    try:
-        resp2 = client.models.generate_content(model="gemini-2.0-flash", contents=validate_prompt)
-        return resp2.text.strip()
-    except Exception as e:
-        print(f"  [LLM] Error in validation pass for '{topic_name}': {e}")
-        return draft
+    print("  [LLM] All retries failed — returning raw headlines.")
+    return _build_raw_fallback(all_headlines)
+
+
+def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
+    """Split LLM output into topic sections by looking for section headers."""
+    sections: dict[str, str] = {}
+    lines = text.split("\n")
+
+    current_name = None
+    current_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip().rstrip(":")
+        # Check if this line is a section header
+        matched = None
+        for name in expected:
+            if stripped.lower() == name.lower() or stripped.lower().startswith(name.lower()):
+                matched = name
+                break
+
+        if matched:
+            if current_name:
+                sections[current_name] = "\n".join(current_lines).strip()
+            current_name = matched
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_name:
+        sections[current_name] = "\n".join(current_lines).strip()
+
+    # Fill in any missing sections
+    for name in expected:
+        if name not in sections or not sections[name]:
+            sections[name] = "No notable developments reported."
+
+    return sections
 
 
 # ---------------------------------------------------------------------------
-# Stock watchlist
+# Stock watchlist: single consolidated LLM call
 # ---------------------------------------------------------------------------
 
-def _fetch_stock_news(client, symbols: list[str]) -> str:
-    """Fetch and summarize meaningful news for watched stocks."""
-    if not symbols:
-        return ""
-
-    print("[Stocks] Checking watchlist...")
-
-    # Gather headlines for all symbols from RSS / NewsAPI
-    all_stock_headlines: dict[str, list[str]] = {}
+def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
+    """Fetch raw headlines for each ticker."""
+    all_headlines: dict[str, list[str]] = {}
+    yesterday = (datetime.now(pytz.timezone(config.TIMEZONE)) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     for symbol in symbols:
         print(f"  Checking: {symbol}...")
         headlines = []
 
-        # Try NewsAPI first
         if config.NEWSAPI_KEY:
-            yesterday = (datetime.now(pytz.timezone(config.TIMEZONE)) - timedelta(days=1)).strftime("%Y-%m-%d")
             try:
                 resp = requests.get(
                     "https://newsapi.org/v2/everything",
@@ -192,7 +277,6 @@ def _fetch_stock_news(client, symbols: list[str]) -> str:
             except Exception:
                 pass
 
-        # RSS fallback: Google News search for the ticker
         if not headlines:
             try:
                 rss_url = (
@@ -208,21 +292,33 @@ def _fetch_stock_news(client, symbols: list[str]) -> str:
             except Exception:
                 pass
 
-        all_stock_headlines[symbol] = headlines
+        all_headlines[symbol] = headlines
 
-    # If no LLM, just return raw headlines
+    return all_headlines
+
+
+def fetch_stock_news() -> str:
+    """Fetch and summarize news for the configured stock watchlist."""
+    if not config.WATCHLIST_STOCKS:
+        return ""
+
+    print("[Stocks] Checking watchlist...")
+    client = _get_gemini_client()
+    all_headlines = _fetch_all_stock_headlines(config.WATCHLIST_STOCKS)
+
+    # Fallback if no LLM
     if client is None:
         lines = []
-        for sym, hdls in all_stock_headlines.items():
+        for sym, hdls in all_headlines.items():
             if hdls:
                 lines.append(f"{sym}: {hdls[0].lstrip('- ')}")
             else:
                 lines.append(f"{sym}: No notable news.")
-        return "\n".join(lines)
+        return "📈 Stock Watchlist\n" + "\n".join(lines)
 
-    # Build a single LLM call with all stock headlines
+    # Build single prompt for all tickers
     block_parts = []
-    for sym, hdls in all_stock_headlines.items():
+    for sym, hdls in all_headlines.items():
         if hdls:
             block_parts.append(f"[{sym}]\n" + "\n".join(hdls))
         else:
@@ -230,62 +326,34 @@ def _fetch_stock_news(client, symbols: list[str]) -> str:
     combined = "\n\n".join(block_parts)
 
     prompt = (
-        f"You are a financial news analyst writing a stock watchlist briefing.\n\n"
+        "You are a financial news analyst writing a stock watchlist briefing.\n\n"
         f"Below are raw headlines for each ticker from the last 24 hours:\n\n"
         f"{combined}\n\n"
-        f"INSTRUCTIONS:\n"
-        f"- For each ticker, write ONE blunt sentence about any meaningful news "
-        f"(earnings, lawsuits, major deals, analyst upgrades/downgrades, regulatory action, "
-        f"significant price moves, executive changes).\n"
-        f"- If there is no meaningful news for a ticker, write: \"No notable news.\"\n"
-        f"- Do NOT repeat article titles. State the fact directly.\n"
-        f"- Format: one line per ticker, starting with the ticker symbol.\n"
-        f"- Example: \"AMZN: Amazon announced a $10B buyback after Q4 earnings beat estimates.\"\n"
-        f"- Example: \"XOM: No notable news.\"\n"
-        f"- Do NOT add any header, intro, or closing commentary."
+        "STRICT RULES:\n"
+        "1. For each ticker, write ONE blunt sentence about any meaningful news "
+        "(earnings, lawsuits, major deals, analyst upgrades/downgrades, regulatory action, "
+        "significant price moves, executive changes).\n"
+        "2. If a headline is just an opinion piece, portfolio advice, or generic market "
+        "commentary with no real news, treat it as 'No notable news.'\n"
+        "3. NEVER copy or quote article titles. Rewrite the fact in your own words.\n"
+        "4. NEVER include source names like 'Seeking Alpha reports' or 'per CNBC'.\n"
+        "5. Format: one line per ticker, starting with the ticker symbol and a colon.\n"
+        "6. Do NOT add any header, intro, or closing.\n\n"
+        "Begin."
     )
 
-    try:
-        resp = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
-        return resp.text.strip()
-    except Exception as e:
-        print(f"  [LLM] Error summarizing stock news: {e}")
-        lines = []
-        for sym, hdls in all_stock_headlines.items():
-            if hdls:
-                lines.append(f"{sym}: {hdls[0].lstrip('- ')}")
-            else:
-                lines.append(f"{sym}: No notable news.")
-        return "\n".join(lines)
+    print("  [LLM] Summarizing stock watchlist (1 call)...")
+    result = _gemini_call(client, prompt)
 
+    if result:
+        return "📈 Stock Watchlist\n" + result
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
-def fetch_news() -> str:
-    """Main entry point: fetch + synthesize all configured news topics."""
-    print("[News] Fetching and synthesizing news...")
-    client = _get_gemini_client()
-    sections = []
-
-    for topic_name, topic_cfg in config.NEWS_TOPICS.items():
-        print(f"  Fetching: {topic_name}...")
-        headlines = _fetch_newsapi_headlines(topic_cfg)
-        if not headlines:
-            print(f"  Falling back to RSS for {topic_name}...")
-            headlines = _fetch_rss_headlines(topic_cfg)
-
-        summary = _synthesize_with_llm(client, topic_name, topic_cfg["length"], headlines)
-        sections.append(f"📰 {topic_name}\n{summary}")
-
-    return "\n\n".join(sections)
-
-
-def fetch_stock_news() -> str:
-    """Fetch and summarize news for the configured stock watchlist."""
-    if not config.WATCHLIST_STOCKS:
-        return ""
-    client = _get_gemini_client()
-    summary = _fetch_stock_news(client, config.WATCHLIST_STOCKS)
-    return f"📈 Stock Watchlist\n{summary}"
+    # Fallback to raw first headline per ticker
+    print("  [LLM] All retries failed — returning raw headlines.")
+    lines = []
+    for sym, hdls in all_headlines.items():
+        if hdls:
+            lines.append(f"{sym}: {hdls[0].lstrip('- ')}")
+        else:
+            lines.append(f"{sym}: No notable news.")
+    return "📈 Stock Watchlist\n" + "\n".join(lines)
