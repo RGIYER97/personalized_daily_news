@@ -29,23 +29,23 @@ TIMEZONE = "US/Eastern"
 # --- News topics and summary lengths (user-editable) ---
 NEWS_TOPICS = {
     "Economic & Financial": {
-        "query": "economy OR finance OR stock market OR Wall Street",
-        "length": "1 paragraph (4-5 sentences)",
+        "query": "economy OR finance OR stock market OR Wall Street OR Federal Reserve OR GDP",
+        "length": "2 paragraphs (8-10 sentences)",
         "category": "business",
     },
     "Geopolitics": {
-        "query": "geopolitics OR diplomacy OR international relations OR war",
-        "length": "2-3 sentences max",
+        "query": "geopolitics OR diplomacy OR international relations OR war OR sanctions OR NATO",
+        "length": "4-6 sentences",
         "category": "general",
     },
     "General News": {
-        "query": "breaking news",
-        "length": "2-3 sentences max",
+        "query": "breaking news OR politics OR Supreme Court OR Congress OR White House",
+        "length": "4-6 sentences",
         "category": "general",
     },
     "Technology": {
-        "query": "technology OR AI OR software OR silicon valley",
-        "length": "1 paragraph (4-5 sentences)",
+        "query": "technology OR artificial intelligence OR AI regulation OR big tech OR semiconductor",
+        "length": "2 paragraphs (8-10 sentences)",
         "category": "technology",
     },
 }

@@ -1,6 +1,7 @@
 import time
 import requests
 import feedparser
+import yfinance as yf
 from datetime import datetime, timedelta
 import pytz
 import config
@@ -51,6 +52,9 @@ _RSS_FEEDS = {
         "https://feeds.bbci.co.uk/news/business/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
         "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+        "https://www.theguardian.com/business/rss",
+        "https://www.ft.com/world?format=rss",
+        "https://rss.politico.com/economy.xml",
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
     ],
     "general": [
@@ -60,6 +64,8 @@ _RSS_FEEDS = {
         "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362",
         "https://feeds.npr.org/1001/rss.xml",
         "https://feeds.bbci.co.uk/news/rss.xml",
+        "https://www.theguardian.com/world/rss",
+        "https://rss.politico.com/politics-news.xml",
         "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     ],
     "technology": [
@@ -67,7 +73,9 @@ _RSS_FEEDS = {
         "https://feeds.bbci.co.uk/news/technology/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
         "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910",
-        "https://news.google.com/rss/search?q=technology&hl=en-US&gl=US&ceid=US:en",
+        "https://www.theguardian.com/technology/rss",
+        "https://feeds.arstechnica.com/arstechnica/index",
+        "https://news.google.com/rss/search?q=technology+AI&hl=en-US&gl=US&ceid=US:en",
     ],
 }
 
@@ -87,7 +95,7 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
             )
             resp.raise_for_status()
             parsed = feedparser.parse(resp.text)
-            for entry in parsed.entries[:7]:
+            for entry in parsed.entries[:10]:
                 pub = entry.get("published_parsed")
                 if pub:
                     pub_date = datetime(*pub[:6], tzinfo=pytz.utc)
@@ -98,7 +106,7 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
                 headlines.append(f"- {title}. {summary}")
         except Exception as e:
             print(f"  [RSS] Error fetching {feed_url}: {e}")
-    return headlines[:20]
+    return headlines[:35]
 
 
 # ---------------------------------------------------------------------------
@@ -154,21 +162,29 @@ def fetch_news() -> str:
     topic_names = list(all_headlines.keys())
 
     prompt = (
-        "You are a senior news editor writing a concise morning briefing.\n\n"
-        "Below are raw headlines grouped by section. For EACH section, write a "
-        "blunt, factual summary that obeys its length constraint.\n\n"
+        "You are a senior editor at a major U.S. newspaper writing a morning intelligence briefing "
+        "for a well-informed reader who wants substance, not filler.\n\n"
+        "Below are raw headlines grouped by section. For EACH section, synthesize a "
+        "factual summary that obeys its length constraint.\n\n"
         f"{combined}\n\n"
         "STRICT RULES:\n"
         "1. Output one section per topic. Start each with the section name on its own line "
         f"(exactly: {', '.join(topic_names)}).\n"
-        "2. Under each section name, write the summary as plain prose paragraphs.\n"
-        "3. State WHAT happened and WHY it matters. Be specific: names, numbers, outcomes.\n"
-        "4. NEVER repeat or quote article titles. Rewrite everything in your own words.\n"
-        "5. NEVER include source names like 'BBC reports' or 'according to NYT'. Just state facts.\n"
-        "6. Omit trivial, celebrity, or off-topic stories.\n"
-        "7. No bullet points, no numbered lists, no markdown formatting.\n"
-        "8. If no headlines were found for a section, write 'No notable developments reported.'\n"
-        "9. Do NOT add any intro, closing, or meta-commentary.\n\n"
+        "2. Under each section name, write the summary as plain prose paragraphs — "
+        "no bullets, no numbered lists, no markdown.\n"
+        "3. Always use real, specific names. Write 'Donald Trump', 'Jerome Powell', "
+        "'Elon Musk', 'Benjamin Netanyahu' — never 'the president', 'the Fed chair', "
+        "'a prominent CEO', or 'a foreign leader'.\n"
+        "4. Always include specific figures where available: dollar amounts, percentages, "
+        "vote counts, casualty counts, poll numbers.\n"
+        "5. Cover only events of genuine U.S. national or worldwide significance. "
+        "Skip local crime, celebrity gossip, sports, lifestyle, and opinion pieces.\n"
+        "6. State WHAT happened, WHO was involved, and WHY it matters globally or for Americans.\n"
+        "7. NEVER copy or quote article titles verbatim. Synthesize in your own words.\n"
+        "8. NEVER attribute to a source ('BBC reports', 'per WSJ'). State facts directly.\n"
+        "9. If a section has no headlines that are genuinely notable at a U.S. or global level, "
+        "write exactly: 'No major developments reported for this period.'\n"
+        "10. Do NOT add any intro sentence, closing sentence, or meta-commentary.\n\n"
         "Begin."
     )
 
@@ -218,8 +234,58 @@ def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Stock watchlist: single consolidated LLM call
+# Stock watchlist: price data + single consolidated LLM call
 # ---------------------------------------------------------------------------
+
+def _fetch_stock_price_data(symbols: list[str]) -> dict[str, dict]:
+    """Fetch latest close, daily % change, and YTD % change for each ticker."""
+    prices: dict[str, dict] = {}
+    est = pytz.timezone(config.TIMEZONE)
+    year_start = datetime(datetime.now(est).year, 1, 1)
+
+    for symbol in symbols:
+        # yfinance uses BRK-B, not BRK.B
+        yf_sym = symbol.replace(".", "-")
+        try:
+            ticker = yf.Ticker(yf_sym)
+            hist = ticker.history(period="5d")
+            if hist.empty or len(hist) < 2:
+                prices[symbol] = {}
+                continue
+
+            close = hist["Close"].iloc[-1]
+            prev_close = hist["Close"].iloc[-2]
+            day_pct = ((close - prev_close) / prev_close) * 100
+
+            ytd_hist = ticker.history(start=year_start)
+            if not ytd_hist.empty and len(ytd_hist) >= 2:
+                ytd_pct = ((close - ytd_hist["Close"].iloc[0]) / ytd_hist["Close"].iloc[0]) * 100
+            else:
+                ytd_pct = None
+
+            prices[symbol] = {
+                "close": close,
+                "day_pct": day_pct,
+                "ytd_pct": ytd_pct,
+            }
+        except Exception as e:
+            print(f"  [yfinance] Error for {symbol}: {e}")
+            prices[symbol] = {}
+
+    return prices
+
+
+def _format_price_line(symbol: str, pdata: dict) -> str:
+    """Return a short human-readable price summary for a ticker."""
+    if not pdata:
+        return f"{symbol}: price unavailable"
+    close = pdata["close"]
+    day = pdata["day_pct"]
+    ytd = pdata.get("ytd_pct")
+    day_str = f"{day:+.1f}% day"
+    ytd_str = f"{ytd:+.1f}% YTD" if ytd is not None else "YTD N/A"
+    return f"{symbol}: ${close:.2f} ({day_str}, {ytd_str})"
+
 
 def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
     """Fetch raw headlines for each ticker."""
@@ -240,7 +306,7 @@ def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
                         "to": yesterday,
                         "sortBy": "relevancy",
                         "language": "en",
-                        "pageSize": 5,
+                        "pageSize": 7,
                         "apiKey": config.NEWSAPI_KEY,
                     },
                     timeout=10,
@@ -256,12 +322,12 @@ def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
             try:
                 rss_url = (
                     f"https://news.google.com/rss/search?"
-                    f"q={symbol}+stock&hl=en-US&gl=US&ceid=US:en"
+                    f"q={symbol}+stock+earnings&hl=en-US&gl=US&ceid=US:en"
                 )
                 resp = requests.get(rss_url, timeout=10)
                 resp.raise_for_status()
                 parsed = feedparser.parse(resp.text)
-                for entry in parsed.entries[:5]:
+                for entry in parsed.entries[:7]:
                     title = entry.get("title", "")
                     headlines.append(f"- {title}")
             except Exception:
@@ -273,48 +339,58 @@ def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
 
 
 def fetch_stock_news() -> str:
-    """Fetch and summarize news for the configured stock watchlist."""
+    """Fetch price data and news headlines for the configured stock watchlist."""
     if not config.WATCHLIST_STOCKS:
         return ""
 
-    print("[Stocks] Checking watchlist...")
+    print("[Stocks] Fetching price data...")
+    price_data = _fetch_stock_price_data(config.WATCHLIST_STOCKS)
+
+    print("[Stocks] Fetching headlines...")
     all_headlines = _fetch_all_stock_headlines(config.WATCHLIST_STOCKS)
 
     if not llm_client.any_llm_configured():
         lines = []
-        for sym, hdls in all_headlines.items():
-            if hdls:
-                lines.append(f"{sym}: {hdls[0].lstrip('- ')}")
-            else:
-                lines.append(f"{sym}: No notable news.")
+        for sym in config.WATCHLIST_STOCKS:
+            price_line = _format_price_line(sym, price_data.get(sym, {}))
+            hdls = all_headlines.get(sym, [])
+            news_blurb = hdls[0].lstrip("- ") if hdls else "No notable news."
+            lines.append(f"{price_line} — {news_blurb}")
         return "📈 Stock Watchlist\n" + "\n".join(lines)
 
     block_parts = []
-    for sym, hdls in all_headlines.items():
-        if hdls:
-            block_parts.append(f"[{sym}]\n" + "\n".join(hdls))
-        else:
-            block_parts.append(f"[{sym}]\nNo headlines found.")
+    for sym in config.WATCHLIST_STOCKS:
+        price_line = _format_price_line(sym, price_data.get(sym, {}))
+        hdls = all_headlines.get(sym, [])
+        hdl_text = "\n".join(hdls) if hdls else "No headlines found."
+        block_parts.append(
+            f"[{sym}]\n"
+            f"Price: {price_line}\n"
+            f"Headlines:\n{hdl_text}"
+        )
     combined = "\n\n".join(block_parts)
 
     prompt = (
         "You are a financial news analyst writing a stock watchlist briefing.\n\n"
-        f"Below are raw headlines for each ticker from the last 24 hours:\n\n"
+        "Below is price performance data and recent headlines for each ticker:\n\n"
         f"{combined}\n\n"
         "STRICT RULES:\n"
-        "1. For each ticker, write ONE blunt sentence about any meaningful news "
-        "(earnings, lawsuits, major deals, analyst upgrades/downgrades, regulatory action, "
-        "significant price moves, executive changes).\n"
-        "2. If a headline is just an opinion piece, portfolio advice, or generic market "
-        "commentary with no real news, treat it as 'No notable news.'\n"
-        "3. NEVER copy or quote article titles. Rewrite the fact in your own words.\n"
-        "4. NEVER include source names like 'Seeking Alpha reports' or 'per CNBC'.\n"
-        "5. Format: one line per ticker, starting with the ticker symbol and a colon.\n"
-        "6. Do NOT add any header, intro, or closing.\n\n"
+        "1. Output one line per ticker in EXACTLY this format:\n"
+        "   TICKER ($price, +X.X% day, +X.X% YTD): One sentence of news.\n"
+        "   Use the price data provided verbatim — do not alter the numbers.\n"
+        "2. The news sentence must describe a specific, meaningful company event: "
+        "earnings results (with actual figures), major deals or acquisitions, "
+        "regulatory action, analyst rating changes with price targets, executive departures/hires, "
+        "or product launches with market impact.\n"
+        "3. Always use real names — no 'the company', 'its CEO', or 'the firm'.\n"
+        "4. If the headlines contain only opinion pieces, portfolio tips, or generic "
+        "market commentary with no concrete company news, write 'No notable company news today.'\n"
+        "5. NEVER copy or quote article titles. Rewrite every fact in your own words.\n"
+        "6. NEVER attribute to a source ('Seeking Alpha says', 'per CNBC').\n"
+        "7. Do NOT add any header, intro, or closing line.\n\n"
         "Begin."
     )
 
-    # Wait between news call and stock call to reduce rate limit pressure
     print(f"  [LLM] Waiting {_BETWEEN_CALLS_DELAY}s before stock call...")
     time.sleep(_BETWEEN_CALLS_DELAY)
     print("  [LLM] Summarizing stock watchlist (1 call)...")
@@ -323,11 +399,11 @@ def fetch_stock_news() -> str:
     if result:
         return "📈 Stock Watchlist\n" + result
 
-    print("  [LLM] All models exhausted — returning raw headlines.")
+    print("  [LLM] All models exhausted — returning price + raw headline fallback.")
     lines = []
-    for sym, hdls in all_headlines.items():
-        if hdls:
-            lines.append(f"{sym}: {hdls[0].lstrip('- ')}")
-        else:
-            lines.append(f"{sym}: No notable news.")
+    for sym in config.WATCHLIST_STOCKS:
+        price_line = _format_price_line(sym, price_data.get(sym, {}))
+        hdls = all_headlines.get(sym, [])
+        news_blurb = hdls[0].lstrip("- ") if hdls else "No notable news."
+        lines.append(f"{price_line} — {news_blurb}")
     return "📈 Stock Watchlist\n" + "\n".join(lines)
