@@ -7,29 +7,50 @@ import pytz
 import config
 
 
-MAX_RETRIES = 3
-RETRY_DELAYS = [2, 5, 10]
+# Gemini models to try in order. If the primary hits 429 rate limit,
+# fall through to lighter/older models before giving up.
+_MODEL_CHAIN = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+]
+
+_MAX_RETRIES_PER_MODEL = 2
+_RETRY_DELAY_SECS = 4
+_BETWEEN_CALLS_DELAY = 3
 
 
 def _gemini_call(client, prompt: str) -> str | None:
-    """Call Gemini with retry + backoff. Returns text or None on failure."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            resp = client.models.generate_content(
-                model="gemini-2.0-flash",
-                contents=prompt,
-            )
-            text = resp.text
-            if text and text.strip():
-                return text.strip()
-            print(f"  [LLM] Empty response on attempt {attempt + 1}")
-        except Exception as e:
-            print(f"  [LLM] Attempt {attempt + 1}/{MAX_RETRIES} failed: {e}")
+    """Call Gemini with model fallback chain + retry per model.
 
-        if attempt < MAX_RETRIES - 1:
-            delay = RETRY_DELAYS[attempt]
-            print(f"  [LLM] Retrying in {delay}s...")
-            time.sleep(delay)
+    For each model: try up to _MAX_RETRIES_PER_MODEL times.
+    On 429 (rate limit): immediately move to the next model.
+    On other errors: retry with delay, then move to next model.
+    """
+    for model in _MODEL_CHAIN:
+        for attempt in range(_MAX_RETRIES_PER_MODEL):
+            try:
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=prompt,
+                )
+                text = resp.text
+                if text and text.strip():
+                    if model != _MODEL_CHAIN[0]:
+                        print(f"  [LLM] Succeeded with fallback model: {model}")
+                    return text.strip()
+                print(f"  [LLM] Empty response from {model} (attempt {attempt + 1})")
+            except Exception as e:
+                err_str = str(e)
+                print(f"  [LLM] {model} attempt {attempt + 1} failed: {err_str[:120]}")
+
+                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
+                    print(f"  [LLM] Rate limited on {model} — trying next model...")
+                    break
+
+            if attempt < _MAX_RETRIES_PER_MODEL - 1:
+                print(f"  [LLM] Retrying {model} in {_RETRY_DELAY_SECS}s...")
+                time.sleep(_RETRY_DELAY_SECS)
 
     return None
 
@@ -69,19 +90,27 @@ def _fetch_newsapi_headlines(topic_cfg: dict) -> list[str]:
 
 _RSS_FEEDS = {
     "business": [
+        "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml",
+        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
         "https://feeds.bbci.co.uk/news/business/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
         "https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB?hl=en-US&gl=US&ceid=US:en",
     ],
     "general": [
+        "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
         "https://feeds.bbci.co.uk/news/world/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100727362",
+        "https://feeds.npr.org/1001/rss.xml",
         "https://feeds.bbci.co.uk/news/rss.xml",
         "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     ],
     "technology": [
+        "https://feeds.a.dj.com/rss/RSSWSJD.xml",
         "https://feeds.bbci.co.uk/news/technology/rss.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml",
+        "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910",
         "https://news.google.com/rss/search?q=technology&hl=en-US&gl=US&ceid=US:en",
     ],
 }
@@ -96,7 +125,10 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
 
     for feed_url in feeds:
         try:
-            resp = requests.get(feed_url, timeout=10)
+            resp = requests.get(
+                feed_url, timeout=10,
+                headers={"User-Agent": "Mozilla/5.0 DailyBriefing/1.0"},
+            )
             resp.raise_for_status()
             parsed = feedparser.parse(resp.text)
             for entry in parsed.entries[:7]:
@@ -110,7 +142,7 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
                 headlines.append(f"- {title}. {summary}")
         except Exception as e:
             print(f"  [RSS] Error fetching {feed_url}: {e}")
-    return headlines[:15]
+    return headlines[:20]
 
 
 def _get_gemini_client():
@@ -154,7 +186,6 @@ def fetch_news() -> str:
         print("  [LLM] No GEMINI_API_KEY — returning raw headlines.")
         return _build_raw_fallback(all_headlines)
 
-    # Build one combined prompt with all topics and their length constraints
     topic_blocks = []
     for topic_name, headlines in all_headlines.items():
         length = config.NEWS_TOPICS[topic_name]["length"]
@@ -198,11 +229,10 @@ def fetch_news() -> str:
     result = _gemini_call(client, prompt)
 
     if result:
-        # Parse the LLM output into labeled sections
         sections = _parse_llm_sections(result, topic_names)
         return "\n\n".join(f"📰 {name}\n{body}" for name, body in sections.items())
 
-    print("  [LLM] All retries failed — returning raw headlines.")
+    print("  [LLM] All models exhausted — returning raw headlines.")
     return _build_raw_fallback(all_headlines)
 
 
@@ -216,7 +246,6 @@ def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
 
     for line in lines:
         stripped = line.strip().rstrip(":")
-        # Check if this line is a section header
         matched = None
         for name in expected:
             if stripped.lower() == name.lower() or stripped.lower().startswith(name.lower()):
@@ -234,7 +263,6 @@ def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
     if current_name:
         sections[current_name] = "\n".join(current_lines).strip()
 
-    # Fill in any missing sections
     for name in expected:
         if name not in sections or not sections[name]:
             sections[name] = "No notable developments reported."
@@ -306,7 +334,6 @@ def fetch_stock_news() -> str:
     client = _get_gemini_client()
     all_headlines = _fetch_all_stock_headlines(config.WATCHLIST_STOCKS)
 
-    # Fallback if no LLM
     if client is None:
         lines = []
         for sym, hdls in all_headlines.items():
@@ -316,7 +343,6 @@ def fetch_stock_news() -> str:
                 lines.append(f"{sym}: No notable news.")
         return "📈 Stock Watchlist\n" + "\n".join(lines)
 
-    # Build single prompt for all tickers
     block_parts = []
     for sym, hdls in all_headlines.items():
         if hdls:
@@ -342,14 +368,16 @@ def fetch_stock_news() -> str:
         "Begin."
     )
 
+    # Wait between news call and stock call to reduce rate limit pressure
+    print(f"  [LLM] Waiting {_BETWEEN_CALLS_DELAY}s before stock call...")
+    time.sleep(_BETWEEN_CALLS_DELAY)
     print("  [LLM] Summarizing stock watchlist (1 call)...")
     result = _gemini_call(client, prompt)
 
     if result:
         return "📈 Stock Watchlist\n" + result
 
-    # Fallback to raw first headline per ticker
-    print("  [LLM] All retries failed — returning raw headlines.")
+    print("  [LLM] All models exhausted — returning raw headlines.")
     lines = []
     for sym, hdls in all_headlines.items():
         if hdls:
