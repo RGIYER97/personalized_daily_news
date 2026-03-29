@@ -6,8 +6,8 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 
 ## Features
 
-- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). One Gemini call synthesizes all four topic sections into blunt, factual prose — not pasted article titles.
-- **Gemini reliability** — If one model hits a **429 rate limit**, the app automatically tries fallback models (`gemini-2.0-flash` → `gemini-2.0-flash-lite` → `gemini-1.5-flash`) and spaces out the news vs. stock API calls to reduce back-to-back throttling.
+- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into blunt, factual prose — not pasted article titles.
+- **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, with **several model IDs** tried automatically (fixes many **404 NOT_FOUND** errors from outdated aliases). On **429** / quota errors it **waits and retries**, then falls through other Gemini IDs. If Google still fails, it uses **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to try Groq before Gemini. There is a **~25s pause** between the news and stock LLM calls to avoid burst rate limits. CI jobs allow **45 minutes** so slow retries are OK.
 - **Stock watchlist** — One line per ticker for meaningful company news. Edit `WATCHLIST_STOCKS` in `config.py`. If nothing notable, the briefing says so.
 - **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
 - **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
@@ -25,7 +25,8 @@ Each run outputs: **Header → News → Stocks → Sports → footer.**
 |---|---|
 | WSJ / CNBC / NPR / BBC / NYT / Google News RSS | **None** — these are standard public RSS endpoints. An individual WSJ.com account does **not** unlock the RSS feeds in code; you are not signing in per request. |
 | NewsAPI | **Yes** — `NEWSAPI_KEY` in `.env` or GitHub Secrets (free tier available). |
-| Google Gemini (summaries) | **Yes** — `GEMINI_API_KEY`. Without it, news and stocks are mostly raw headlines. |
+| Google Gemini (summaries) | **Optional but recommended** — `GEMINI_API_KEY`. |
+| Groq (summaries fallback) | **Optional** — `GROQ_API_KEY`. Use when Gemini always returns 429/404. At least one of Gemini or Groq should be set or output stays raw headlines. **Do not paste keys in chat** — use `.env` and GitHub Secrets only. |
 
 Full article pages on publisher sites may still require a subscription in a browser; the briefing only uses what the RSS items expose.
 
@@ -43,7 +44,8 @@ Stock tickers also use NewsAPI when configured, otherwise Google News RSS search
 
 ```
 main.py                              — Orchestrator and scheduler
-news_fetcher.py                      — News + stock headlines, Gemini synthesis
+llm_client.py                        — Gemini + Groq completion with retries
+news_fetcher.py                      — News + stock headlines, LLM synthesis
 sports_fetcher.py                   — ESPN scores and schedules
 notifier.py                          — SMS gateway + SMTP email
 config.py                            — Topics, watchlist, sports teams (.env for secrets)
@@ -72,7 +74,9 @@ Edit `.env`:
 | Variable | Purpose | Notes |
 |---|---|---|
 | `NEWSAPI_KEY` | [NewsAPI](https://newsapi.org) | Free tier; extra headlines beyond RSS |
-| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | **Strongly recommended** — without it, news and stocks stay as raw headlines |
+| `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | Primary summarizer; try with [Groq](https://console.groq.com) if you hit 429s |
+| `GROQ_API_KEY` | [Groq console](https://console.groq.com) | **Free** fallback when Gemini is rate-limited or returns 404 |
+| `LLM_GEMINI_FIRST` | `true` or `false` | Set `false` to call **Groq before Gemini** |
 | `USER_PHONE` | 10-digit US number | e.g. `2125551234` |
 | `USER_CARRIER` | Carrier slug | See table below (`tmobile`, `verizon`, …) |
 | `USER_EMAIL` | Your inbox | Email fallback recipient |
@@ -114,7 +118,9 @@ If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_da
 | Secret | Value |
 |---|---|
 | `NEWSAPI_KEY` | NewsAPI key |
-| `GEMINI_API_KEY` | Gemini key (needed for summaries and to cope with rate limits via fallback models) |
+| `GEMINI_API_KEY` | Gemini key (optional if Groq is set) |
+| `GROQ_API_KEY` | Groq key (recommended when Gemini quota is tight) |
+| `LLM_GEMINI_FIRST` | Optional: `false` to prefer Groq first |
 | `USER_PHONE` | 10-digit number |
 | `USER_CARRIER` | e.g. `tmobile` |
 | `USER_EMAIL` | Your email |

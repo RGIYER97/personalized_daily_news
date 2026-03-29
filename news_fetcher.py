@@ -1,58 +1,14 @@
 import time
 import requests
 import feedparser
-from google import genai
 from datetime import datetime, timedelta
 import pytz
 import config
+import llm_client
 
 
-# Gemini models to try in order. If the primary hits 429 rate limit,
-# fall through to lighter/older models before giving up.
-_MODEL_CHAIN = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-]
-
-_MAX_RETRIES_PER_MODEL = 2
-_RETRY_DELAY_SECS = 4
-_BETWEEN_CALLS_DELAY = 3
-
-
-def _gemini_call(client, prompt: str) -> str | None:
-    """Call Gemini with model fallback chain + retry per model.
-
-    For each model: try up to _MAX_RETRIES_PER_MODEL times.
-    On 429 (rate limit): immediately move to the next model.
-    On other errors: retry with delay, then move to next model.
-    """
-    for model in _MODEL_CHAIN:
-        for attempt in range(_MAX_RETRIES_PER_MODEL):
-            try:
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=prompt,
-                )
-                text = resp.text
-                if text and text.strip():
-                    if model != _MODEL_CHAIN[0]:
-                        print(f"  [LLM] Succeeded with fallback model: {model}")
-                    return text.strip()
-                print(f"  [LLM] Empty response from {model} (attempt {attempt + 1})")
-            except Exception as e:
-                err_str = str(e)
-                print(f"  [LLM] {model} attempt {attempt + 1} failed: {err_str[:120]}")
-
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str.upper():
-                    print(f"  [LLM] Rate limited on {model} — trying next model...")
-                    break
-
-            if attempt < _MAX_RETRIES_PER_MODEL - 1:
-                print(f"  [LLM] Retrying {model} in {_RETRY_DELAY_SECS}s...")
-                time.sleep(_RETRY_DELAY_SECS)
-
-    return None
+# Longer gap between the two LLM calls (news vs stocks) to reduce rate-limit bursts.
+_BETWEEN_CALLS_DELAY = 25
 
 
 # ---------------------------------------------------------------------------
@@ -145,13 +101,6 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
     return headlines[:20]
 
 
-def _get_gemini_client():
-    """Create and return a Gemini client, or None if no key."""
-    if not config.GEMINI_API_KEY:
-        return None
-    return genai.Client(api_key=config.GEMINI_API_KEY)
-
-
 # ---------------------------------------------------------------------------
 # News: single consolidated LLM call for ALL topics
 # ---------------------------------------------------------------------------
@@ -169,10 +118,8 @@ def _build_raw_fallback(all_headlines: dict[str, list[str]]) -> str:
 
 
 def fetch_news() -> str:
-    """Fetch headlines for all topics, then synthesize in ONE Gemini call."""
+    """Fetch headlines for all topics, then synthesize in ONE LLM call."""
     print("[News] Fetching headlines...")
-    client = _get_gemini_client()
-
     all_headlines: dict[str, list[str]] = {}
     for topic_name, topic_cfg in config.NEWS_TOPICS.items():
         print(f"  Fetching: {topic_name}...")
@@ -182,8 +129,8 @@ def fetch_news() -> str:
             headlines = _fetch_rss_headlines(topic_cfg)
         all_headlines[topic_name] = headlines
 
-    if client is None:
-        print("  [LLM] No GEMINI_API_KEY — returning raw headlines.")
+    if not llm_client.any_llm_configured():
+        print("  [LLM] No GEMINI_API_KEY or GROQ_API_KEY — returning raw headlines.")
         return _build_raw_fallback(all_headlines)
 
     topic_blocks = []
@@ -226,7 +173,7 @@ def fetch_news() -> str:
     )
 
     print("  [LLM] Synthesizing all news sections (1 call)...")
-    result = _gemini_call(client, prompt)
+    result = llm_client.complete(prompt)
 
     if result:
         sections = _parse_llm_sections(result, topic_names)
@@ -331,10 +278,9 @@ def fetch_stock_news() -> str:
         return ""
 
     print("[Stocks] Checking watchlist...")
-    client = _get_gemini_client()
     all_headlines = _fetch_all_stock_headlines(config.WATCHLIST_STOCKS)
 
-    if client is None:
+    if not llm_client.any_llm_configured():
         lines = []
         for sym, hdls in all_headlines.items():
             if hdls:
@@ -372,7 +318,7 @@ def fetch_stock_news() -> str:
     print(f"  [LLM] Waiting {_BETWEEN_CALLS_DELAY}s before stock call...")
     time.sleep(_BETWEEN_CALLS_DELAY)
     print("  [LLM] Summarizing stock watchlist (1 call)...")
-    result = _gemini_call(client, prompt)
+    result = llm_client.complete(prompt)
 
     if result:
         return "📈 Stock Watchlist\n" + result

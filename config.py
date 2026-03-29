@@ -7,6 +7,11 @@ load_dotenv()
 # --- API Keys ---
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# Groq: free tier at https://console.groq.com — used when Gemini fails (429/404)
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+# If false, try Groq first (useful when Gemini quota is always exhausted)
+_gf = os.getenv("LLM_GEMINI_FIRST", "true").strip().lower()
+LLM_GEMINI_FIRST = _gf in ("1", "true", "yes", "")
 
 # --- Delivery targets ---
 USER_PHONE = os.getenv("USER_PHONE", "")
