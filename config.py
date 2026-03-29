@@ -45,6 +45,9 @@ NEWS_TOPICS = {
     },
 }
 
+# --- Stock watchlist (user-editable) ---
+WATCHLIST_STOCKS = ["COF", "AXP", "AMZN", "BRK.B", "COST", "GOOGL", "NFLX", "SPOT", "XOM"]
+
 # --- Sports teams to track ---
 SPORTS_TEAMS = [
     {"name": "Oakland Athletics", "sport": "baseball", "espn_slug": "mlb", "espn_id": "11"},

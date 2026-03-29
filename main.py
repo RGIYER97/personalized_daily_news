@@ -5,7 +5,7 @@ import pytz
 import schedule
 
 import config
-from news_fetcher import fetch_news
+from news_fetcher import fetch_news, fetch_stock_news
 from sports_fetcher import fetch_sports
 from notifier import deliver
 
@@ -19,16 +19,22 @@ def build_briefing() -> str:
     header = f"☀️ Good Morning! Daily Briefing for {date_header}\n{'=' * 50}"
 
     news_section = fetch_news()
+    stock_section = fetch_stock_news()
     sports_section = fetch_sports()
 
-    briefing = "\n\n".join([
+    parts = [
         header,
         "--- NEWS ---",
         news_section,
-        "--- SPORTS ---",
-        sports_section,
-        "— End of Briefing —",
-    ])
+    ]
+    if stock_section:
+        parts.append("--- STOCKS ---")
+        parts.append(stock_section)
+    parts.append("--- SPORTS ---")
+    parts.append(sports_section)
+    parts.append("— End of Briefing —")
+
+    briefing = "\n\n".join(parts)
 
     return briefing
 
