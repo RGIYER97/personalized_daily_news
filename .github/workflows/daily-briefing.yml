@@ -2,9 +2,8 @@ name: Daily News Briefing
 
 on:
   schedule:
-    # 7:00 AM EDT = 11:00 UTC (EDT is UTC-4, in effect Mar–Nov)
-    # In winter (EST, UTC-5), this fires at 6:00 AM — change to "0 12 * * *" from Nov–Mar
-    - cron: "0 11 * * *"
+    # TEMP TEST: 8:30 AM EDT = 12:30 UTC (EDT is UTC-4)
+    - cron: "30 12 * * *"
   workflow_dispatch:
     # Allows manual trigger from the GitHub Actions tab
 
