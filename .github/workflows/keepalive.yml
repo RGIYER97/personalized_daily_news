@@ -19,6 +19,11 @@ jobs:
       actions: write
     steps:
       - uses: actions/checkout@v4
+      - name: Heartbeat (event + time)
+        run: |
+          echo "heartbeat_event=${{ github.event_name }}"
+          echo "heartbeat_utc=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "heartbeat_et=$(TZ=America/New_York date '+%Y-%m-%d %I:%M:%S %p %Z')"
       - name: Re-enable scheduled workflows
         run: |
           gh workflow enable daily-briefing.yml || true

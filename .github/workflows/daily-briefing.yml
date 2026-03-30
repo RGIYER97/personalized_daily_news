@@ -19,6 +19,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Heartbeat (event + time)
+        run: |
+          echo "heartbeat_event=${{ github.event_name }}"
+          echo "heartbeat_utc=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "heartbeat_et=$(TZ=America/New_York date '+%Y-%m-%d %I:%M:%S %p %Z')"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
