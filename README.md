@@ -138,7 +138,7 @@ No WSJ or RSS-specific secrets are required.
 3. Name it something like `cron-briefing-trigger`
 4. Set expiration (e.g. 1 year)
 5. Under **Repository access**, select **Only select repositories** → choose `personalized_daily_news`
-6. Under **Permissions → Repository permissions**, set **Contents** to **Read and write** (Metadata read-only is enabled by default)
+6. Under **Permissions → Repository permissions**, set **Actions** to **Read and write** (Metadata read-only is enabled by default)
 7. Click **Generate token** and copy it — you'll need it in the next step
 
 ### Step 3: Set up cron-job.org
