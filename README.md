@@ -107,13 +107,13 @@ Edit `.env`:
 python main.py --now
 ```
 
-## GitHub Actions (recommended)
+## GitHub Actions + cron-job.org (recommended)
 
-Uses ~1 minute per run; fits the free Actions allowance.
+The briefing runs on GitHub Actions. An external cron service ([cron-job.org](https://cron-job.org)) triggers it daily via the GitHub API — this is more reliable than GitHub's built-in `schedule` trigger, which can silently skip or delay runs.
 
-### Use this repo
+### Step 1: Add GitHub Secrets
 
-If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news), fork or clone it, then add **Settings → Secrets and variables → Actions** repository secrets:
+Go to your repo → **Settings → Secrets and variables → Actions** and add these repository secrets:
 
 | Secret | Value |
 |---|---|
@@ -131,14 +131,46 @@ If you use [personalized_daily_news](https://github.com/RGIYER97/personalized_da
 
 No WSJ or RSS-specific secrets are required.
 
-### Verify
+### Step 2: Create a GitHub Personal Access Token (PAT)
 
-1. **Actions** → **Daily News Briefing** → **Run workflow**
-2. Confirm SMS or email arrives
+1. Go to [github.com/settings/tokens?type=beta](https://github.com/settings/tokens?type=beta) (fine-grained tokens)
+2. Click **Generate new token**
+3. Name it something like `cron-briefing-trigger`
+4. Set expiration (e.g. 1 year)
+5. Under **Repository access**, select **Only select repositories** → choose `personalized_daily_news`
+6. Under **Permissions → Repository permissions**, set **Actions** to **Read and write**
+7. Click **Generate token** and copy it — you'll need it in the next step
 
-### Schedule (UTC)
+### Step 3: Set up cron-job.org
 
-The workflow uses cron in UTC. Example: `0 12 * * *` ≈ 7:00 AM Eastern Standard Time. During daylight time you may want `0 11 * * *` for 7:00 AM local — edit `.github/workflows/daily-briefing.yml`.
+1. Sign up at [cron-job.org](https://cron-job.org) (free)
+2. Click **Create cronjob**
+3. Fill in:
+   - **Title:** `Daily News Briefing`
+   - **URL:**
+     ```
+     https://api.github.com/repos/RGIYER97/personalized_daily_news/actions/workflows/daily-briefing.yml/dispatches
+     ```
+   - **Schedule:** Every day at your desired time (e.g. **8:00 AM**), timezone **America/New_York**
+   - **Request method:** `POST`
+   - **Request headers** (click "Advanced" or "Headers"):
+     ```
+     Authorization: Bearer YOUR_GITHUB_PAT_HERE
+     Accept: application/vnd.github+json
+     ```
+   - **Request body:**
+     ```json
+     {"ref":"main"}
+     ```
+4. Click **Create**
+
+### Step 4: Verify
+
+1. In cron-job.org, click **Test run** on your new job
+2. Go to GitHub → **Actions** → confirm a new `Daily News Briefing` run appears
+3. Check that SMS or email arrives
+
+The cronjob will now fire daily at your configured time. You can also still trigger manually from the GitHub **Actions → Run workflow** button.
 
 ## Customization (all in `config.py`)
 

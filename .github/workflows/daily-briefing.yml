@@ -1,11 +1,8 @@
 name: Daily News Briefing
 
 on:
-  schedule:
-    # TEMP TEST: run every 10 minutes to verify schedule trigger
-    - cron: "*/10 * * * *"
   workflow_dispatch:
-    # Allows manual trigger from the GitHub Actions tab
+    # Triggered externally by cron-job.org or manually from the Actions tab
 
 jobs:
   send-briefing:
