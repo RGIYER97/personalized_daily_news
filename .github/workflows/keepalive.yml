@@ -1,0 +1,23 @@
+name: Keepalive
+
+# GitHub disables scheduled workflows after 60 days of repository inactivity.
+# This workflow runs weekly and re-enables any disabled workflows, preventing
+# the daily briefing from silently stopping.
+
+on:
+  schedule:
+    - cron: "0 10 * * 0"  # Every Sunday at 10:00 UTC
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Re-enable scheduled workflows
+        run: |
+          gh workflow enable daily-briefing.yml || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
