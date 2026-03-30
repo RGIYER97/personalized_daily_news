@@ -2,8 +2,8 @@ name: Daily News Briefing
 
 on:
   schedule:
-    # TEMP TEST: 8:30 AM EDT = 12:30 UTC (EDT is UTC-4)
-    - cron: "30 12 * * *"
+    # TEMP TEST: run every 10 minutes to verify schedule trigger
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     # Allows manual trigger from the GitHub Actions tab
 
