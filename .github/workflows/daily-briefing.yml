@@ -4,7 +4,7 @@ on:
   schedule:
     # 7:00 AM EST = 12:00 UTC (EST is UTC-5)
     # During EDT (Mar–Nov), this fires at 8:00 AM local — adjust to "11 0" for 7 AM EDT
-    - cron: "0 12 * * *"
+    - cron: "0 11 * * *"
   workflow_dispatch:
     # Allows manual trigger from the GitHub Actions tab
 
