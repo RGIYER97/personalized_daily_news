@@ -21,15 +21,17 @@ def _fetch_newsapi_headlines(topic_cfg: dict) -> list[str]:
     if not config.NEWSAPI_KEY:
         return []
 
-    yesterday = (datetime.now(pytz.timezone(config.TIMEZONE)) - timedelta(days=1)).strftime("%Y-%m-%d")
+    est = pytz.timezone(config.TIMEZONE)
+    today = datetime.now(est).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(est) - timedelta(days=1)).strftime("%Y-%m-%d")
     url = "https://newsapi.org/v2/everything"
     params = {
         "q": topic_cfg["query"],
         "from": yesterday,
-        "to": yesterday,
-        "sortBy": "relevancy",
+        "to": today,
+        "sortBy": "publishedAt",
         "language": "en",
-        "pageSize": 10,
+        "pageSize": 15,
         "apiKey": config.NEWSAPI_KEY,
     }
     try:
@@ -85,7 +87,9 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
     category = topic_cfg.get("category", "general")
     feeds = _RSS_FEEDS.get(category, _RSS_FEEDS["general"])
     headlines = []
-    yesterday = datetime.now(pytz.timezone(config.TIMEZONE)) - timedelta(days=1)
+    est = pytz.timezone(config.TIMEZONE)
+    now = datetime.now(est)
+    cutoff = (now - timedelta(hours=30)).astimezone(pytz.utc)
 
     for feed_url in feeds:
         try:
@@ -99,7 +103,7 @@ def _fetch_rss_headlines(topic_cfg: dict) -> list[str]:
                 pub = entry.get("published_parsed")
                 if pub:
                     pub_date = datetime(*pub[:6], tzinfo=pytz.utc)
-                    if pub_date.date() < (yesterday.date() - timedelta(days=1)):
+                    if pub_date < cutoff:
                         continue
                 title = entry.get("title", "")
                 summary = entry.get("summary", "")
@@ -161,9 +165,13 @@ def fetch_news() -> str:
     combined = "\n\n".join(topic_blocks)
     topic_names = list(all_headlines.keys())
 
+    est = pytz.timezone(config.TIMEZONE)
+    today_str = datetime.now(est).strftime("%A, %B %-d, %Y")
+
     prompt = (
         "You are a senior editor at a major U.S. newspaper writing a morning intelligence briefing "
-        "for a well-informed reader who wants substance, not filler.\n\n"
+        f"for {today_str}. The reader is well-informed and wants only NET NEW developments — "
+        "events that broke or materially advanced in the last 24 hours.\n\n"
         "Below are raw headlines grouped by section. For EACH section, synthesize a "
         "factual summary that obeys its length constraint.\n\n"
         f"{combined}\n\n"
@@ -172,19 +180,23 @@ def fetch_news() -> str:
         f"(exactly: {', '.join(topic_names)}).\n"
         "2. Under each section name, write the summary as plain prose paragraphs — "
         "no bullets, no numbered lists, no markdown.\n"
-        "3. Always use real, specific names. Write 'Donald Trump', 'Jerome Powell', "
+        "3. Only include stories that represent NEW information: a new event, a new decision, "
+        "new data released, a new statement, or a meaningful escalation. "
+        "Do NOT recap ongoing situations unless something concretely changed in the last 24 hours. "
+        "Do NOT include 'analysis' or 'explainer' pieces about older events.\n"
+        "4. Always use real, specific names. Write 'Donald Trump', 'Jerome Powell', "
         "'Elon Musk', 'Benjamin Netanyahu' — never 'the president', 'the Fed chair', "
         "'a prominent CEO', or 'a foreign leader'.\n"
-        "4. Always include specific figures where available: dollar amounts, percentages, "
+        "5. Always include specific figures where available: dollar amounts, percentages, "
         "vote counts, casualty counts, poll numbers.\n"
-        "5. Cover only events of genuine U.S. national or worldwide significance. "
+        "6. Cover only events of genuine U.S. national or worldwide significance. "
         "Skip local crime, celebrity gossip, sports, lifestyle, and opinion pieces.\n"
-        "6. State WHAT happened, WHO was involved, and WHY it matters globally or for Americans.\n"
-        "7. NEVER copy or quote article titles verbatim. Synthesize in your own words.\n"
-        "8. NEVER attribute to a source ('BBC reports', 'per WSJ'). State facts directly.\n"
-        "9. If a section has no headlines that are genuinely notable at a U.S. or global level, "
-        "write exactly: 'No major developments reported for this period.'\n"
-        "10. Do NOT add any intro sentence, closing sentence, or meta-commentary.\n\n"
+        "7. State WHAT happened, WHO was involved, and WHY it matters globally or for Americans.\n"
+        "8. NEVER copy or quote article titles verbatim. Synthesize in your own words.\n"
+        "9. NEVER attribute to a source ('BBC reports', 'per WSJ'). State facts directly.\n"
+        "10. If a section has no genuinely new, notable developments from the last 24 hours, "
+        "write exactly: 'No major new developments reported today.'\n"
+        "11. Do NOT add any intro sentence, closing sentence, or meta-commentary.\n\n"
         "Begin."
     )
 
@@ -290,7 +302,9 @@ def _format_price_line(symbol: str, pdata: dict) -> str:
 def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
     """Fetch raw headlines for each ticker."""
     all_headlines: dict[str, list[str]] = {}
-    yesterday = (datetime.now(pytz.timezone(config.TIMEZONE)) - timedelta(days=1)).strftime("%Y-%m-%d")
+    est = pytz.timezone(config.TIMEZONE)
+    today = datetime.now(est).strftime("%Y-%m-%d")
+    yesterday = (datetime.now(est) - timedelta(days=1)).strftime("%Y-%m-%d")
 
     for symbol in symbols:
         print(f"  Checking: {symbol}...")
@@ -303,8 +317,8 @@ def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
                     params={
                         "q": f'"{symbol}" stock',
                         "from": yesterday,
-                        "to": yesterday,
-                        "sortBy": "relevancy",
+                        "to": today,
+                        "sortBy": "publishedAt",
                         "language": "en",
                         "pageSize": 7,
                         "apiKey": config.NEWSAPI_KEY,
@@ -370,24 +384,29 @@ def fetch_stock_news() -> str:
         )
     combined = "\n\n".join(block_parts)
 
+    est = pytz.timezone(config.TIMEZONE)
+    today_str = datetime.now(est).strftime("%A, %B %-d, %Y")
+
     prompt = (
-        "You are a financial news analyst writing a stock watchlist briefing.\n\n"
+        "You are a financial news analyst writing a stock watchlist briefing "
+        f"for {today_str}.\n\n"
         "Below is price performance data and recent headlines for each ticker:\n\n"
         f"{combined}\n\n"
         "STRICT RULES:\n"
         "1. Output one line per ticker in EXACTLY this format:\n"
         "   TICKER ($price, +X.X% day, +X.X% YTD): One sentence of news.\n"
         "   Use the price data provided verbatim — do not alter the numbers.\n"
-        "2. The news sentence must describe a specific, meaningful company event: "
+        "2. The news sentence must describe a specific, NEW company event from the last 24 hours: "
         "earnings results (with actual figures), major deals or acquisitions, "
         "regulatory action, analyst rating changes with price targets, executive departures/hires, "
         "or product launches with market impact.\n"
-        "3. Always use real names — no 'the company', 'its CEO', or 'the firm'.\n"
-        "4. If the headlines contain only opinion pieces, portfolio tips, or generic "
-        "market commentary with no concrete company news, write 'No notable company news today.'\n"
-        "5. NEVER copy or quote article titles. Rewrite every fact in your own words.\n"
-        "6. NEVER attribute to a source ('Seeking Alpha says', 'per CNBC').\n"
-        "7. Do NOT add any header, intro, or closing line.\n\n"
+        "3. Do NOT include old/ongoing stories, opinion pieces, portfolio tips, or recaps.\n"
+        "4. Always use real names — no 'the company', 'its CEO', or 'the firm'.\n"
+        "5. If the headlines contain no concrete NEW company news from the last 24 hours, "
+        "write 'No notable company news today.'\n"
+        "6. NEVER copy or quote article titles. Rewrite every fact in your own words.\n"
+        "7. NEVER attribute to a source ('Seeking Alpha says', 'per CNBC').\n"
+        "8. Do NOT add any header, intro, or closing line.\n\n"
         "Begin."
     )
 
