@@ -27,25 +27,27 @@ SEND_TIME = os.getenv("SEND_TIME", "07:00")
 TIMEZONE = "US/Eastern"
 
 # --- News topics and summary lengths (user-editable) ---
+# "length" = maximum bullets allowed for the section. The LLM will use FEWER bullets
+# on slow news days and more (up to the cap) when there are many critical stories.
 NEWS_TOPICS = {
     "Economic & Financial": {
         "query": "economy OR finance OR stock market OR Wall Street OR Federal Reserve OR GDP",
-        "length": "2 paragraphs (8-10 sentences)",
+        "length": "up to 6 bullets",
         "category": "business",
     },
     "Geopolitics": {
         "query": "geopolitics OR diplomacy OR international relations OR war OR sanctions OR NATO",
-        "length": "4-6 sentences",
+        "length": "up to 5 bullets",
         "category": "general",
     },
     "General News": {
         "query": "breaking news OR politics OR Supreme Court OR Congress OR White House",
-        "length": "4-6 sentences",
+        "length": "up to 5 bullets",
         "category": "general",
     },
     "Technology": {
         "query": "technology OR artificial intelligence OR AI regulation OR big tech OR semiconductor",
-        "length": "2 paragraphs (8-10 sentences)",
+        "length": "up to 6 bullets",
         "category": "technology",
     },
 }

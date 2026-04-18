@@ -6,7 +6,7 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 
 ## Features
 
-- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into blunt, factual prose — not pasted article titles.
+- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into a **bulleted digest** of the most critical stories (one bullet per story, `• ` lines). Bullet count is **dynamic per day**: fewer bullets when news is quiet, more up to each section’s cap when the day is heavy — not pasted article titles.
 - **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, trying current models in order: **Gemini 2.5 Flash → Gemini 3 Flash → Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite** (per [Google's model list](https://ai.google.dev/gemini-api/docs/models)). **404** skips to the next ID; **429** waits 45s and retries. If all Gemini models fail, it falls back to **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to use Groq first. There is a **~25s pause** between the news and stock LLM calls. CI jobs allow **45 minutes** for retries.
 - **Stock watchlist** — One line per ticker for meaningful company news. Edit `WATCHLIST_STOCKS` in `config.py`. If nothing notable, the briefing says so.
 - **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
@@ -174,9 +174,11 @@ The cronjob will now fire daily at your configured time. You can also still trig
 
 ## Customization (all in `config.py`)
 
-### News topics and lengths
+### News topics and bullet caps
 
 Edit `NEWS_TOPICS`: each entry has `query`, `length`, and `category` (which RSS bucket is used when NewsAPI is empty).
+
+The `length` field is passed to the LLM as a **maximum bullets** hint for that section (for example `up to 6 bullets`). The model uses fewer bullets on slow days and more (never above that cap) when there are many important stories. Adjust the wording or numbers in `length` to change how dense each section can get.
 
 ### Stock watchlist
 
