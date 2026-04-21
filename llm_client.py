@@ -8,17 +8,17 @@ import config
 
 # Gemini model IDs in priority order — current as of March 2026.
 # Per https://ai.google.dev/gemini-api/docs/models:
+#   Gemini 3 Flash     — frontier-class, Preview (preferred default)
 #   Gemini 2.5 Flash   — best price/performance for low-latency tasks (stable)
-#   Gemini 3 Flash     — frontier-class, Preview
 #   Gemini 2.5 Flash-Lite — fastest / cheapest in the 2.5 family (stable)
 #   Gemini 3.1 Flash-Lite — frontier Preview, fast + cheap
 # NOTE: "Gemini 2.5 Flash TTS" is a text-to-speech audio model — NOT for text tasks.
 # 2.0 and 1.5 models are deprecated/shutting down and intentionally omitted.
 _GEMINI_MODELS = [
+    "gemini-3.0-flash",           # Gemini 3 Flash — primary default
+    "gemini-3-flash",             # alternate ID for Gemini 3 Flash
     "gemini-2.5-flash",           # Gemini 2.5 Flash (stable)
     "gemini-2.5-flash-preview",   # preview alias in case stable isn't live yet for key
-    "gemini-3-flash",             # Gemini 3 Flash (Preview)
-    "gemini-3.0-flash",           # alternate ID for Gemini 3 Flash
     "gemini-2.5-flash-lite",      # Gemini 2.5 Flash-Lite (stable)
     "gemini-3.1-flash-lite",      # Gemini 3.1 Flash-Lite (Preview)
     "gemini-3.1-flash-lite-preview",
