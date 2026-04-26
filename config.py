@@ -26,6 +26,16 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SEND_TIME = os.getenv("SEND_TIME", "07:00")
 TIMEZONE = "US/Eastern"
 
+# --- Weather (defaults to Harrison, NJ) ---
+WEATHER_LAT = os.getenv("WEATHER_LAT", "40.7459")
+WEATHER_LON = os.getenv("WEATHER_LON", "-74.1543")
+WEATHER_CITY_NAME = os.getenv("WEATHER_CITY_NAME", "Harrison, NJ")
+
+# --- Apple Calendar (iCloud CalDAV) ---
+# Generate an app-specific password at https://appleid.apple.com → Security → App-specific passwords
+APPLE_ID = os.getenv("APPLE_ID", "")
+APPLE_APP_PASSWORD = os.getenv("APPLE_APP_PASSWORD", "")
+
 # --- News topics and summary lengths (user-editable) ---
 # "length" = maximum bullets allowed for the section. The LLM will use FEWER bullets
 # on slow news days and more (up to the cap) when there are many critical stories.

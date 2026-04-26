@@ -7,6 +7,8 @@ import schedule
 import config
 from news_fetcher import fetch_news, fetch_stock_news
 from sports_fetcher import fetch_sports
+from weather_fetcher import fetch_weather
+from calendar_fetcher import fetch_calendar_events
 from notifier import deliver
 
 
@@ -18,15 +20,20 @@ def build_briefing() -> str:
 
     header = f"☀️ Good Morning! Daily Briefing for {date_header}\n{'=' * 50}"
 
+    weather_line = fetch_weather()
+    calendar_section = fetch_calendar_events()
     news_section = fetch_news()
     stock_section = fetch_stock_news()
     sports_section = fetch_sports()
 
-    parts = [
-        header,
-        "--- NEWS ---",
-        news_section,
-    ]
+    parts = [header]
+    if weather_line:
+        parts.append(weather_line)
+    if calendar_section:
+        parts.append("--- CALENDAR ---")
+        parts.append(calendar_section)
+    parts.append("--- NEWS ---")
+    parts.append(news_section)
     if stock_section:
         parts.append("--- STOCKS ---")
         parts.append(stock_section)

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Does
 
-A Python-based daily news briefing system that fetches headlines from RSS feeds and optionally NewsAPI, synthesizes them via an LLM (Google Gemini or Groq), appends a stock watchlist and sports scores, then delivers the result via email-to-SMS gateway or fallback email. It runs on a schedule via GitHub Actions triggered by cron-job.org.
+A Python-based daily morning briefing system. It fetches weather, Apple Calendar events, news headlines (RSS + optional NewsAPI), stock watchlist news, and sports scores — synthesizes the news and stocks via an LLM (Google Gemini or Groq) — then delivers everything via email-to-SMS gateway or fallback email. Runs on a schedule via GitHub Actions triggered by cron-job.org.
 
 ## Running the Project
 
@@ -20,12 +20,14 @@ There are no automated tests. The `--now` flag is the primary way to manually ve
 
 ## Architecture
 
-**Data flow:** `main.py` → `build_briefing()` → fetch news → fetch stocks → fetch sports → deliver
+**Data flow:** `main.py` → `build_briefing()` → fetch weather → fetch calendar → fetch news → fetch stocks → fetch sports → deliver
 
 | File | Role |
 |------|------|
 | `main.py` | Orchestrator: `build_briefing()` ties everything together; `main()` starts scheduler or runs immediately |
-| `config.py` | Central config loaded from `.env`; defines `NEWS_TOPICS`, `WATCHLIST_STOCKS`, `SPORTS_TEAMS` — user customizations go here |
+| `config.py` | Central config loaded from `.env`; defines `NEWS_TOPICS`, `WATCHLIST_STOCKS`, `SPORTS_TEAMS`, weather location, Apple credentials — user customizations go here |
+| `weather_fetcher.py` | Open-Meteo API (no key); returns today's condition, high/low, and upcoming adverse-weather windows (rain/snow/storms) with start–end times |
+| `calendar_fetcher.py` | iCloud CalDAV via `caldav`; fetches all Apple Calendar events for today sorted by time |
 | `news_fetcher.py` | Fetches RSS/NewsAPI headlines; makes **two consolidated LLM calls** (one for all 4 news topics, one for stocks) |
 | `llm_client.py` | Dual-model client: Gemini primary with Groq fallback; handles 429 (45s wait + retry) and 404 (skip to next model) |
 | `sports_fetcher.py` | ESPN public scoreboard API; no LLM, formats yesterday's scores and today's schedule |
@@ -45,8 +47,11 @@ User-facing customization lives in `config.py`:
 - `NEWS_TOPICS` — 4 sections with search query, `max_bullets` cap, and category
 - `WATCHLIST_STOCKS` — list of ticker symbols
 - `SPORTS_TEAMS` — list of dicts with `name`, `sport`, `espn_slug`, `espn_id`
+- `WEATHER_LAT` / `WEATHER_LON` / `WEATHER_CITY_NAME` — defaults to Harrison, NJ; override via `.env`
 
 Required `.env` variables (see `.env.example`): `GEMINI_API_KEY`, `GROQ_API_KEY` (at least one), `SMTP_EMAIL`, `SMTP_PASSWORD` (Gmail App Password), `USER_EMAIL`, `USER_PHONE`, `USER_CARRIER`. `NEWSAPI_KEY` is optional — the system falls back to RSS.
+
+Optional `.env` variables: `APPLE_ID` + `APPLE_APP_PASSWORD` (app-specific password from appleid.apple.com) to enable Apple Calendar events in the briefing. Weather requires no credentials.
 
 ## GitHub Actions Deployment
 

@@ -1,13 +1,15 @@
 # Daily News & Sports Briefing
 
-A Python-based daily news and sports aggregator that runs every morning via GitHub Actions, synthesizes headlines with an LLM, and delivers a briefing via SMS or email — all using free services.
+A Python-based daily morning briefing that runs via GitHub Actions, synthesizes news with an LLM, and delivers everything via SMS or email — all using free services.
 
 Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news)
 
 ## Features
 
+- **Weather** — Today’s condition, high/low (°F), and any upcoming rain/snow/storm windows with start–end times (e.g. `Rain 2 PM–5 PM`). Uses [Open-Meteo](https://open-meteo.com) — no API key required. Defaults to Harrison, NJ; override with any lat/lon in `.env`.
+- **Apple Calendar** — Today’s events from iCloud, sorted by time, shown as a daily agenda. Uses iCloud CalDAV with an app-specific password — works in GitHub Actions without a browser. Optional; skipped gracefully if credentials are not set.
 - **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into a **bulleted digest** of the most critical stories (one bullet per story, `• ` lines). Bullet count is **dynamic per day**: fewer bullets when news is quiet, more up to each section’s cap when the day is heavy — not pasted article titles.
-- **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, trying current models in order: **Gemini 3 Flash → Gemini 2.5 Flash → Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite** (per [Google's model list](https://ai.google.dev/gemini-api/docs/models)). **404** skips to the next ID; **429** waits 45s and retries. If all Gemini models fail, it falls back to **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to use Groq first. There is a **~25s pause** between the news and stock LLM calls. CI jobs allow **45 minutes** for retries.
+- **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, trying current models in order: **Gemini 3 Flash → Gemini 2.5 Flash → Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite** (per [Google’s model list](https://ai.google.dev/gemini-api/docs/models)). **404** skips to the next ID; **429** waits 45s and retries. If all Gemini models fail, it falls back to **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to use Groq first. There is a **~25s pause** between the news and stock LLM calls. CI jobs allow **45 minutes** for retries.
 - **Stock watchlist** — One line per ticker for meaningful company news. Edit `WATCHLIST_STOCKS` in `config.py`. If nothing notable, the briefing says so.
 - **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
 - **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
@@ -15,7 +17,9 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 
 ## Briefing order
 
-Each run outputs: **Header → News → Stocks → Sports → footer.**
+Each run outputs: **Header → Weather → Calendar → News → Stocks → Sports → footer.**
+
+Weather always appears (no credentials needed). Calendar appears only when `APPLE_ID` and `APPLE_APP_PASSWORD` are set.
 
 ## News sources: do you need to log in?
 
@@ -44,9 +48,11 @@ Stock tickers also use NewsAPI when configured, otherwise Google News RSS search
 
 ```
 main.py                              — Orchestrator and scheduler
+weather_fetcher.py                   — Open-Meteo forecast (no key required)
+calendar_fetcher.py                  — Apple Calendar via iCloud CalDAV
 llm_client.py                        — Gemini + Groq completion with retries
 news_fetcher.py                      — News + stock headlines, LLM synthesis
-sports_fetcher.py                   — ESPN scores and schedules
+sports_fetcher.py                    — ESPN scores and schedules
 notifier.py                          — SMS gateway + SMTP email
 config.py                            — Topics, watchlist, sports teams (.env for secrets)
 .env.example                         — Environment template
@@ -83,6 +89,10 @@ Edit `.env`:
 | `SMTP_EMAIL` | Gmail used to send | Often same as `USER_EMAIL` |
 | `SMTP_PASSWORD` | [Gmail App Password](https://myaccount.google.com/apppasswords) | Not your normal Gmail login password |
 | `SMTP_HOST` / `SMTP_PORT` | Usually `smtp.gmail.com` / `587` | |
+| `APPLE_ID` | Your Apple ID email | Optional; enables Apple Calendar section |
+| `APPLE_APP_PASSWORD` | App-specific password from [appleid.apple.com](https://appleid.apple.com) | Generate under Security → App-Specific Passwords |
+| `WEATHER_LAT` / `WEATHER_LON` | Latitude / longitude | Optional; defaults to Harrison, NJ (`40.7459` / `-74.1543`) |
+| `WEATHER_CITY_NAME` | Display name for weather line | Optional; defaults to `Harrison, NJ` |
 
 ### Supported carriers (Email-to-SMS)
 
@@ -128,8 +138,10 @@ Go to your repo → **Settings → Secrets and variables → Actions** and add t
 | `SMTP_PASSWORD` | Gmail App Password |
 | `SMTP_HOST` | `smtp.gmail.com` |
 | `SMTP_PORT` | `587` |
+| `APPLE_ID` | Your Apple ID email (optional) |
+| `APPLE_APP_PASSWORD` | App-specific password from appleid.apple.com (optional) |
 
-No WSJ or RSS-specific secrets are required.
+No WSJ, RSS, or weather-specific secrets are required. Weather works out of the box.
 
 ### Step 2: Create a GitHub Personal Access Token (PAT)
 
@@ -171,6 +183,31 @@ No WSJ or RSS-specific secrets are required.
 3. Check that SMS or email arrives
 
 The cronjob will now fire daily at your configured time. You can also still trigger manually from the GitHub **Actions → Run workflow** button.
+
+## Apple Calendar setup (optional)
+
+To show today's events in the briefing:
+
+1. Go to [appleid.apple.com](https://appleid.apple.com) → Sign In → **Security → App-Specific Passwords → Generate**
+2. Label it something like `News Briefing` and copy the generated password (`xxxx-xxxx-xxxx-xxxx`)
+3. Add to `.env`:
+   ```
+   APPLE_ID=you@icloud.com
+   APPLE_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx
+   ```
+4. Add the same two values as GitHub Secrets (`APPLE_ID` and `APPLE_APP_PASSWORD`)
+
+All iCloud calendars are fetched automatically. If the credentials are missing, the calendar section is silently skipped.
+
+## Weather setup
+
+No setup required — weather appears automatically using [Open-Meteo](https://open-meteo.com) (no API key). It defaults to **Harrison, NJ**. To change location, add to `.env`:
+
+```
+WEATHER_LAT=40.7128
+WEATHER_LON=-74.0060
+WEATHER_CITY_NAME=New York, NY
+```
 
 ## Customization (all in `config.py`)
 
