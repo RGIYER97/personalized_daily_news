@@ -62,6 +62,13 @@ NEWS_TOPICS = {
     },
 }
 
+# --- Birthday reminders (user-editable) ---
+# year is optional — include it to show age. Checks today + next 7 days.
+BIRTHDAYS = [
+    # {"name": "Mom", "month": 3, "day": 14, "year": 1960},
+    # {"name": "Best Friend", "month": 12, "day": 31},
+]
+
 # --- Stock watchlist (user-editable) ---
 WATCHLIST_STOCKS = ["COF", "AXP", "AMZN", "BRK.B", "COST", "GOOGL", "NFLX", "SPOT", "XOM"]
 

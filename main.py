@@ -9,6 +9,8 @@ from news_fetcher import fetch_news, fetch_stock_news
 from sports_fetcher import fetch_sports
 from weather_fetcher import fetch_weather
 from calendar_fetcher import fetch_calendar_events
+from fun_fact_fetcher import fetch_fun_fact
+from birthday_fetcher import fetch_birthdays
 from notifier import deliver
 
 
@@ -22,9 +24,11 @@ def build_briefing() -> str:
 
     weather_line = fetch_weather()
     calendar_section = fetch_calendar_events()
+    birthday_section = fetch_birthdays()
     news_section = fetch_news()
     stock_section = fetch_stock_news()
     sports_section = fetch_sports()
+    fun_fact_section = fetch_fun_fact()
 
     parts = [header]
     if weather_line:
@@ -32,6 +36,8 @@ def build_briefing() -> str:
     if calendar_section:
         parts.append("--- CALENDAR ---")
         parts.append(calendar_section)
+    if birthday_section:
+        parts.append(birthday_section)
     parts.append("--- NEWS ---")
     parts.append(news_section)
     if stock_section:
@@ -39,6 +45,8 @@ def build_briefing() -> str:
         parts.append(stock_section)
     parts.append("--- SPORTS ---")
     parts.append(sports_section)
+    if fun_fact_section:
+        parts.append(fun_fact_section)
     parts.append("— End of Briefing —")
 
     briefing = "\n\n".join(parts)
