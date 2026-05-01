@@ -28,9 +28,9 @@ There are no automated tests. The `--now` flag is the primary way to manually ve
 | `config.py` | Central config loaded from `.env`; defines `NEWS_TOPICS`, `WATCHLIST_STOCKS`, `SPORTS_TEAMS`, weather location, Apple credentials — user customizations go here |
 | `weather_fetcher.py` | Open-Meteo API (no key); returns today's condition, high/low, and upcoming adverse-weather windows (rain/snow/storms) with start–end times |
 | `calendar_fetcher.py` | iCloud CalDAV via `caldav`; fetches all Apple Calendar events for today sorted by time |
-| `news_fetcher.py` | Fetches RSS/NewsAPI headlines; makes **two consolidated LLM calls** (one for all 4 news topics, one for stocks) |
+| `news_fetcher.py` | Fetches RSS/NewsAPI headlines; makes **two consolidated LLM calls** (one for all 4 news topics, one for stocks). Post-processes LLM output through `_deduplicate_sections` (Jaccard keyword similarity, removes cross-section repeats) and `_filter_low_quality_bullets` (drops bullets without named entities or under 12 words). Stock section prepends market indices (S&P 500, Nasdaq, Dow) and upcoming earnings for watchlist tickers. Price data is cross-checked against `fast_info` to catch stale/adjusted history; 52-week high/low context is appended for moves ≥ 3%. |
 | `llm_client.py` | Dual-model client: Gemini primary with Groq fallback; handles 429 (45s wait + retry) and 404 (skip to next model) |
-| `sports_fetcher.py` | ESPN public scoreboard API; no LLM, formats yesterday's scores and today's schedule |
+| `sports_fetcher.py` | ESPN public scoreboard API; no LLM, formats yesterday's scores and today's schedule. Appends playoff series record to both result and schedule lines when the ESPN `series` field is present. |
 | `notifier.py` | Delivers via email-to-SMS gateway (≤1500 chars) or email fallback |
 
 ## LLM Fallback Chain
@@ -40,6 +40,16 @@ When `LLM_GEMINI_FIRST=true` (default):
 2. Groq: Llama 3.3 → 3.1 → Mixtral
 
 Each model gets 3 attempts (12s delay between attempts for Gemini, 15s for Groq). If everything fails, raw unsynthesized headlines are returned. The 25s delay between the news and stock LLM calls is intentional rate-limit mitigation — do not remove it.
+
+## Post-processing pipeline (news sections)
+
+After the LLM returns the news digest, three passes run in order:
+
+1. `_parse_llm_sections` — splits raw LLM text into per-topic dicts
+2. `_deduplicate_sections` — removes any bullet whose Jaccard keyword similarity to an earlier-section bullet is ≥ 0.3; first occurrence wins
+3. `_filter_low_quality_bullets` — drops bullets with fewer than 12 words or no pattern matching two consecutive capitalized words (named-entity proxy)
+
+The LLM prompt also instructs the model to exclude routine earnings/financials for any ticker already in `WATCHLIST_STOCKS` (covered in the stock section) and to skip stories for watchlist tickers unless they represent landmark regulatory or criminal events.
 
 ## Key Configuration
 

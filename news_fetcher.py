@@ -77,7 +77,7 @@ _RSS_FEEDS = {
         "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=19854910",
         "https://www.theguardian.com/technology/rss",
         "https://feeds.arstechnica.com/arstechnica/index",
-        "https://news.google.com/rss/search?q=technology+AI&hl=en-US&gl=US&ceid=US:en",
+        "https://www.technologyreview.com/feed/",
     ],
 }
 
@@ -215,8 +215,21 @@ def fetch_news() -> str:
         "11. NEVER attribute to a source ('BBC reports', 'per WSJ'). State facts directly.\n"
         "12. If a section has no genuinely new, notable developments from the last 24 hours, "
         "write exactly one line (no bullet): 'No major new developments reported today.'\n"
-        "13. Do NOT add any intro sentence, closing sentence, or meta-commentary.\n\n"
-        "Begin."
+        "13. Do NOT add any intro sentence, closing sentence, or meta-commentary.\n"
+        "14. Every bullet must be a grammatically complete sentence with a clear subject, "
+        "a finite verb, and a concrete fact. Before outputting each bullet, re-read it: "
+        "if any words seem missing, the subject and verb don't connect, or the meaning is "
+        "unclear, rewrite it completely or omit it. Never output a sentence fragment.\n"
+        + (
+            f"15. These tickers are covered in a dedicated Stock Watchlist section: "
+            f"{', '.join(config.WATCHLIST_STOCKS)}. Do NOT include their routine earnings "
+            "results, quarterly revenue/profit figures, or stock price moves in any news "
+            "section. Exception: a landmark antitrust ruling, executive criminal charges, "
+            "or an acquisition that reshapes an entire industry may appear once in the "
+            "most relevant section.\n"
+            if config.WATCHLIST_STOCKS else ""
+        )
+        + "\nBegin."
     )
 
     print("  [LLM] Synthesizing all news sections (1 call)...")
@@ -225,6 +238,7 @@ def fetch_news() -> str:
     if result:
         sections = _parse_llm_sections(result, topic_names)
         sections = _deduplicate_sections(sections)
+        sections = _filter_low_quality_bullets(sections)
         return "\n\n".join(f"📰 {name}\n{body}" for name, body in sections.items())
 
     print("  [LLM] All models exhausted — returning raw headlines.")
@@ -275,6 +289,38 @@ def _deduplicate_sections(sections: dict[str, str]) -> dict[str, str]:
     return result
 
 
+def _filter_low_quality_bullets(sections: dict[str, str]) -> dict[str, str]:
+    """Drop bullets that are too short or lack any named entity."""
+    import re
+
+    # Two consecutive Title-Case or ALL-CAPS words = likely a proper noun
+    _NAMED_ENTITY = re.compile(
+        r'\b([A-Z][a-z]{2,}|[A-Z]{2,})\s+([A-Z][a-z]{2,}|[A-Z]{2,})\b'
+    )
+    _MIN_WORDS = 12
+
+    result: dict[str, str] = {}
+    for section_name, body in sections.items():
+        lines = body.split('\n')
+        kept: list[str] = []
+        for line in lines:
+            if not line.strip().startswith('•'):
+                kept.append(line)
+                continue
+            text = line.strip()[1:].strip()
+            if len(text.split()) < _MIN_WORDS:
+                print(f"  [Quality] Removed short bullet from '{section_name}': {line[:70]}…")
+                continue
+            if not _NAMED_ENTITY.search(text):
+                print(f"  [Quality] Removed vague bullet from '{section_name}': {line[:70]}…")
+                continue
+            kept.append(line)
+        body_out = '\n'.join(kept).strip()
+        result[section_name] = body_out if body_out else 'No major new developments reported today.'
+
+    return result
+
+
 def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
     """Split LLM output into topic sections by looking for section headers."""
     sections: dict[str, str] = {}
@@ -313,6 +359,63 @@ def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
 # Stock watchlist: price data + single consolidated LLM call
 # ---------------------------------------------------------------------------
 
+_INDEX_SYMBOLS = {"S&P 500": "^GSPC", "Nasdaq": "^IXIC", "Dow": "^DJI"}
+
+
+def _fetch_earnings_calendar(symbols: list[str]) -> str:
+    """Return a comma-separated list of watchlist tickers reporting in the next 3 days."""
+    from datetime import date as date_type
+    est = pytz.timezone(config.TIMEZONE)
+    today = datetime.now(est).date()
+
+    entries = []
+    for symbol in symbols:
+        yf_sym = symbol.replace(".", "-")
+        try:
+            cal = yf.Ticker(yf_sym).calendar
+            if not cal:
+                continue
+            dates = cal.get("Earnings Date") if isinstance(cal, dict) else None
+            if not dates:
+                continue
+            if not isinstance(dates, (list, tuple)):
+                dates = [dates]
+            for d in dates:
+                try:
+                    if hasattr(d, "date"):
+                        d = d.date()
+                    if not isinstance(d, date_type):
+                        continue
+                    delta = (d - today).days
+                    if 0 <= delta <= 3:
+                        when = "today" if delta == 0 else ("tomorrow" if delta == 1 else f"in {delta} days")
+                        entries.append(f"{symbol} ({when})")
+                        break
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    return ", ".join(entries)
+
+
+def _fetch_index_snapshot() -> str:
+    """Return a one-line market summary: S&P 500, Nasdaq, Dow day performance."""
+    parts = []
+    for name, sym in _INDEX_SYMBOLS.items():
+        try:
+            hist = yf.Ticker(sym).history(period="2d")
+            if hist.empty or len(hist) < 2:
+                continue
+            close = hist["Close"].iloc[-1]
+            prev = hist["Close"].iloc[-2]
+            pct = ((close - prev) / prev) * 100
+            parts.append(f"{name} {close:,.0f} ({pct:+.1f}%)")
+        except Exception:
+            pass
+    return "  ".join(parts)
+
+
 def _fetch_stock_price_data(symbols: list[str]) -> dict[str, dict]:
     """Fetch latest close, daily % change, and YTD % change for each ticker."""
     prices: dict[str, dict] = {}
@@ -333,6 +436,25 @@ def _fetch_stock_price_data(symbols: list[str]) -> dict[str, dict]:
             prev_close = hist["Close"].iloc[-2]
             day_pct = ((close - prev_close) / prev_close) * 100
 
+            # Cross-check history price against fast_info; also grab 52-week range.
+            week52_high = week52_low = None
+            try:
+                fi = ticker.fast_info
+                fi_price = getattr(fi, "last_price", None)
+                if fi_price and fi_price > 0 and abs(close - fi_price) / fi_price > 0.3:
+                    print(
+                        f"  [yfinance] {symbol}: history ${close:.2f} diverges >30% from "
+                        f"fast_info ${fi_price:.2f} — using fast_info"
+                    )
+                    fi_prev = getattr(fi, "previous_close", None)
+                    close = fi_price
+                    if fi_prev and fi_prev > 0:
+                        day_pct = ((close - fi_prev) / fi_prev) * 100
+                week52_high = getattr(fi, "year_high", None)
+                week52_low = getattr(fi, "year_low", None)
+            except Exception:
+                pass
+
             ytd_hist = ticker.history(start=year_start)
             if not ytd_hist.empty and len(ytd_hist) >= 2:
                 ytd_pct = ((close - ytd_hist["Close"].iloc[0]) / ytd_hist["Close"].iloc[0]) * 100
@@ -343,6 +465,8 @@ def _fetch_stock_price_data(symbols: list[str]) -> dict[str, dict]:
                 "close": close,
                 "day_pct": day_pct,
                 "ytd_pct": ytd_pct,
+                "week52_high": week52_high,
+                "week52_low": week52_low,
             }
         except Exception as e:
             print(f"  [yfinance] Error for {symbol}: {e}")
@@ -360,7 +484,18 @@ def _format_price_line(symbol: str, pdata: dict) -> str:
     ytd = pdata.get("ytd_pct")
     day_str = f"{day:+.1f}% day"
     ytd_str = f"{ytd:+.1f}% YTD" if ytd is not None else "YTD N/A"
-    return f"{symbol}: ${close:.2f} ({day_str}, {ytd_str})"
+
+    context = ""
+    if abs(day) >= 3:
+        high52 = pdata.get("week52_high")
+        low52 = pdata.get("week52_low")
+        if high52 and low52 and high52 > low52:
+            if close <= low52 * 1.05:
+                context = ", near 52-wk low"
+            elif close >= high52 * 0.95:
+                context = ", near 52-wk high"
+
+    return f"{symbol}: ${close:.2f} ({day_str}, {ytd_str}{context})"
 
 
 def _fetch_all_stock_headlines(symbols: list[str]) -> dict[str, list[str]]:
@@ -421,11 +556,23 @@ def fetch_stock_news() -> str:
     if not config.WATCHLIST_STOCKS:
         return ""
 
+    print("[Stocks] Fetching index snapshot...")
+    index_line = _fetch_index_snapshot()
+
+    print("[Stocks] Fetching earnings calendar...")
+    earnings_line = _fetch_earnings_calendar(config.WATCHLIST_STOCKS)
+
     print("[Stocks] Fetching price data...")
     price_data = _fetch_stock_price_data(config.WATCHLIST_STOCKS)
 
     print("[Stocks] Fetching headlines...")
     all_headlines = _fetch_all_stock_headlines(config.WATCHLIST_STOCKS)
+
+    header = "📈 Stock Watchlist"
+    if index_line:
+        header += f"\nMarkets: {index_line}"
+    if earnings_line:
+        header += f"\nEarnings soon: {earnings_line}"
 
     if not llm_client.any_llm_configured():
         lines = []
@@ -434,7 +581,7 @@ def fetch_stock_news() -> str:
             hdls = all_headlines.get(sym, [])
             news_blurb = hdls[0].lstrip("- ") if hdls else "No notable news."
             lines.append(f"{price_line} — {news_blurb}")
-        return "📈 Stock Watchlist\n" + "\n".join(lines)
+        return header + "\n" + "\n".join(lines)
 
     block_parts = []
     for sym in config.WATCHLIST_STOCKS:
@@ -480,7 +627,7 @@ def fetch_stock_news() -> str:
     result = llm_client.complete(prompt)
 
     if result:
-        return "📈 Stock Watchlist\n" + result
+        return header + "\n" + result
 
     print("  [LLM] All models exhausted — returning price + raw headline fallback.")
     lines = []
@@ -489,4 +636,4 @@ def fetch_stock_news() -> str:
         hdls = all_headlines.get(sym, [])
         news_blurb = hdls[0].lstrip("- ") if hdls else "No notable news."
         lines.append(f"{price_line} — {news_blurb}")
-    return "📈 Stock Watchlist\n" + "\n".join(lines)
+    return header + "\n" + "\n".join(lines)

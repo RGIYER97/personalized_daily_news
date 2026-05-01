@@ -8,10 +8,10 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 
 - **Weather** — Today’s condition, high/low (°F), and any upcoming rain/snow/storm windows with start–end times (e.g. `Rain 2 PM–5 PM`). Uses [Open-Meteo](https://open-meteo.com) — no API key required. Defaults to Harrison, NJ; override with any lat/lon in `.env`.
 - **Apple Calendar** — Today’s events from iCloud, sorted by time, shown as a daily agenda. Uses iCloud CalDAV with an app-specific password — works in GitHub Actions without a browser. Optional; skipped gracefully if credentials are not set.
-- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into a **bulleted digest** of the most critical stories (one bullet per story, `• ` lines). Bullet count is **dynamic per day**: fewer bullets when news is quiet, more up to each section’s cap when the day is heavy — not pasted article titles.
+- **News synthesizer** — Fetches headlines from NewsAPI (optional) plus many **public RSS feeds** (see below). **One LLM call** synthesizes all four topic sections into a **bulleted digest** of the most critical stories (one bullet per story, `• ` lines). Bullet count is **dynamic per day**: fewer bullets when news is quiet, more up to each section’s cap when the day is heavy — not pasted article titles. After the LLM responds, two post-processing passes run: a **cross-section deduplication** pass (Jaccard keyword similarity) removes any story that already appeared in an earlier section, and a **quality filter** drops bullets that lack named entities or are too short to be real news. Routine earnings for watchlist tickers are excluded from news sections since the stock section covers them.
 - **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, trying current models in order: **Gemini 3 Flash → Gemini 2.5 Flash → Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite** (per [Google’s model list](https://ai.google.dev/gemini-api/docs/models)). **404** skips to the next ID; **429** waits 45s and retries. If all Gemini models fail, it falls back to **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to use Groq first. There is a **~25s pause** between the news and stock LLM calls. CI jobs allow **45 minutes** for retries.
-- **Stock watchlist** — One line per ticker for meaningful company news. Edit `WATCHLIST_STOCKS` in `config.py`. If nothing notable, the briefing says so.
-- **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1.
+- **Stock watchlist** — Opens with a **market snapshot** (S&P 500, Nasdaq, Dow day performance) and an **earnings calendar** listing any watchlist tickers reporting in the next 3 days. Each ticker then shows price, day %, and YTD %; tickers that moved ≥ 3% on the day also show **52-week high/low context** (e.g. `near 52-wk low`). Price data is cross-checked against yfinance `fast_info` to catch stale or split-adjusted history values. Edit `WATCHLIST_STOCKS` in `config.py`.
+- **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1. **Playoff series records** are appended automatically when available (e.g. `Rockets lead series 3-2`).
 - **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
 - **GitHub Actions** — Scheduled daily run; no always-on laptop required.
 
@@ -38,9 +38,9 @@ Full article pages on publisher sites may still require a subscription in a brow
 
 Configured in `news_fetcher.py`:
 
-- **Economic & Financial:** WSJ US Business, WSJ Markets, BBC Business, NYT Business, CNBC top stories, Google News (business topic).
-- **Geopolitics / General News:** WSJ World, BBC World, NYT World, CNBC world, NPR top stories, BBC main feed, Google News US.
-- **Technology:** WSJ tech, BBC tech, NYT tech, CNBC tech, Google News (technology search).
+- **Economic & Financial:** WSJ US Business, WSJ Markets, BBC Business, NYT Business, CNBC top stories, Guardian Business, FT, Politico Economy, Google News (business topic).
+- **Geopolitics / General News:** WSJ World, BBC World, NYT World, CNBC world, NPR top stories, BBC main feed, Guardian World, Politico Politics, Google News US.
+- **Technology:** WSJ tech, BBC tech, NYT tech, CNBC tech, Guardian tech, Ars Technica, MIT Technology Review.
 
 Stock tickers also use NewsAPI when configured, otherwise Google News RSS search per symbol.
 

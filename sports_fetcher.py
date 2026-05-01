@@ -111,6 +111,22 @@ def _format_f1_schedule(event: dict) -> str | None:
     return line
 
 
+def _extract_series_summary(comp: dict) -> str:
+    """Return a short series summary if this is a playoff series, else ''."""
+    series = comp.get("series", {})
+    if not series:
+        return ""
+    title = series.get("title", "")
+    if title:
+        return title
+    competitors = series.get("competitors", [])
+    if len(competitors) == 2:
+        w = [c.get("wins", 0) for c in competitors]
+        if sum(w) > 0:
+            return f"Series {w[0]}-{w[1]}"
+    return ""
+
+
 def _format_yesterday_result(event: dict, team_id: str, team_name: str) -> str | None:
     """Format a completed game result for team sports."""
     status_type = event.get("status", {}).get("type", {}).get("name", "")
@@ -150,9 +166,13 @@ def _format_yesterday_result(event: dict, team_id: str, team_name: str) -> str |
         headline = h.get("shortLinkText", "")
         break
 
+    series_summary = _extract_series_summary(comp)
+
     result = f"{away_name} {away_score} @ {home_name} {home_score}"
     if headline:
         result += f" — {headline}"
+    if series_summary:
+        result += f" ({series_summary})"
 
     return result
 
@@ -219,9 +239,13 @@ def _format_today_schedule(event: dict, team_id: str, team_name: str) -> str | N
     else:
         matchup = f"@ {home_name}"
 
+    series_summary = _extract_series_summary(comp)
+
     line = f"{team_name} {matchup} — {time_str}"
     if broadcast:
         line += f" (TV: {broadcast})"
+    if series_summary:
+        line += f" — {series_summary}"
 
     return line
 
