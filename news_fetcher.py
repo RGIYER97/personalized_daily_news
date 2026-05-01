@@ -178,34 +178,39 @@ def fetch_news() -> str:
         "STRICT RULES:\n"
         "1. Output one section per topic. Start each with the section name on its own line "
         f"(exactly: {', '.join(topic_names)}).\n"
-        "2. Under each section name, write the digest as bullet points, one bullet per story. "
+        "2. ZERO CROSS-SECTION DUPLICATES — this is the most important rule. Before writing "
+        "anything, mentally assign every story to exactly ONE section. A story belongs in its "
+        "PRIMARY category only: a tech company earnings report goes in Economic & Financial, "
+        "not Technology; a geopolitical event that rattles markets stays in Geopolitics, not "
+        "Economic & Financial; a company product launch stays in Technology, not General News. "
+        "Once a story is assigned to a section, it MUST NOT appear — even in paraphrased or "
+        "reworded form — in any other section. Treat this as a hard constraint: if you find "
+        "yourself writing the same underlying event twice, delete the second occurrence "
+        "immediately before outputting anything.\n"
+        "3. Under each section name, write the digest as bullet points, one bullet per story. "
         "Each bullet MUST start with '• ' (a bullet character followed by a space) at the "
         "beginning of its own line. No numbered lists, no sub-bullets, no markdown headers.\n"
-        "3. The number of bullets is DYNAMIC based on how much critical news there is today. "
+        "4. The number of bullets is DYNAMIC based on how much critical news there is today. "
         "Use FEWER bullets on slow news days — even just 1 or 2 bullets is fine if only that "
         "many stories are genuinely important. Use MORE bullets (up to the section's cap) only "
         "when the day is packed with critical stories. Never exceed the section's bullet cap. "
         "Quality over quantity — do NOT pad with minor stories just to hit the cap.\n"
-        "4. Each bullet must be 1-3 tight sentences describing ONE story: WHAT happened, WHO was "
+        "5. Each bullet must be 1-3 tight sentences describing ONE story: WHAT happened, WHO was "
         "involved, and WHY it matters globally or for Americans. Do not combine unrelated stories "
         "into a single bullet.\n"
-        "5. Only include stories that represent NEW information: a new event, a new decision, "
+        "6. Only include stories that represent NEW information: a new event, a new decision, "
         "new data released, a new statement, or a meaningful escalation. "
         "Do NOT recap ongoing situations unless something concretely changed in the last 24 hours. "
         "Do NOT include 'analysis' or 'explainer' pieces about older events.\n"
-        "6. Always use real, specific names. Write 'Donald Trump', 'Jerome Powell', "
+        "7. Always use real, specific names. Write 'Donald Trump', 'Jerome Powell', "
         "'Elon Musk', 'Benjamin Netanyahu' — never 'the president', 'the Fed chair', "
         "'a prominent CEO', or 'a foreign leader'.\n"
-        "7. Always include specific figures where available: dollar amounts, percentages, "
+        "8. Always include specific figures where available: dollar amounts, percentages, "
         "vote counts, casualty counts, poll numbers.\n"
-        "8. Cover only events that would make the front page of a major international newspaper — "
+        "9. Cover only events that would make the front page of a major international newspaper — "
         "genuine U.S. national or worldwide significance. Apply a high bar: if a story would not "
         "materially affect millions of people or shift global dynamics, omit it. "
         "Skip local crime, regional politics, celebrity gossip, sports, lifestyle, and opinion pieces.\n"
-        "9. NO DUPLICATES ACROSS SECTIONS. Before finalizing, scan all sections together: if the "
-        "same underlying event appears in more than one section, keep it only in the single most "
-        "relevant section and remove it from the others. A story gets at most one bullet across "
-        "the entire briefing.\n"
         "10. NEVER copy or quote article titles verbatim. Synthesize in your own words.\n"
         "11. NEVER attribute to a source ('BBC reports', 'per WSJ'). State facts directly.\n"
         "12. If a section has no genuinely new, notable developments from the last 24 hours, "
@@ -219,10 +224,55 @@ def fetch_news() -> str:
 
     if result:
         sections = _parse_llm_sections(result, topic_names)
+        sections = _deduplicate_sections(sections)
         return "\n\n".join(f"📰 {name}\n{body}" for name, body in sections.items())
 
     print("  [LLM] All models exhausted — returning raw headlines.")
     return _build_raw_fallback(all_headlines)
+
+
+def _deduplicate_sections(sections: dict[str, str]) -> dict[str, str]:
+    """Remove bullets that are near-duplicates of a bullet already seen in an earlier section."""
+    import re
+
+    STOP_WORDS = {
+        'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+        'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'has', 'have',
+        'had', 'be', 'been', 'it', 'its', 'this', 'that', 'as', 'after', 'while',
+        'over', 'into', 'through', 'between', 'their', 'they', 'which', 'who',
+        'what', 'when', 'where', 'how', 'not', 'no', 'so', 'about', 'than',
+        'more', 'also', 'will', 'would', 'could', 'amid', 'still', 'both',
+    }
+
+    def keywords(text: str) -> set[str]:
+        words = re.findall(r'\b[a-zA-Z]{4,}\b', text.lower())
+        return {w for w in words if w not in STOP_WORDS}
+
+    def jaccard(a: str, b: str) -> float:
+        ka, kb = keywords(a), keywords(b)
+        if not ka or not kb:
+            return 0.0
+        return len(ka & kb) / len(ka | kb)
+
+    seen: list[str] = []
+    result: dict[str, str] = {}
+
+    for section_name, body in sections.items():
+        lines = body.split('\n')
+        kept: list[str] = []
+        for line in lines:
+            if not line.strip().startswith('•'):
+                kept.append(line)
+                continue
+            if any(jaccard(line, s) >= 0.3 for s in seen):
+                print(f"  [Dedup] Removed from '{section_name}': {line[:70]}…")
+                continue
+            kept.append(line)
+            seen.append(line)
+        body_out = '\n'.join(kept).strip()
+        result[section_name] = body_out if body_out else 'No major new developments reported today.'
+
+    return result
 
 
 def _parse_llm_sections(text: str, expected: list[str]) -> dict[str, str]:
