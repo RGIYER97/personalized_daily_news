@@ -14,8 +14,6 @@ _gf = os.getenv("LLM_GEMINI_FIRST", "true").strip().lower()
 LLM_GEMINI_FIRST = _gf in ("1", "true", "yes", "")
 
 # --- Delivery targets ---
-USER_PHONE = os.getenv("USER_PHONE", "")
-USER_CARRIER = os.getenv("USER_CARRIER", "")
 USER_EMAIL = os.getenv("USER_EMAIL", "")
 SMTP_EMAIL = os.getenv("SMTP_EMAIL", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")

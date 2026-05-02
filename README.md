@@ -1,6 +1,6 @@
 # Daily News & Sports Briefing
 
-A Python-based daily morning briefing that runs via GitHub Actions, synthesizes news with an LLM, and delivers everything via SMS or email — all using free services.
+A Python-based daily morning briefing that runs via GitHub Actions, synthesizes news with an LLM, and delivers everything via email — all using free services.
 
 Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/personalized_daily_news)
 
@@ -12,7 +12,6 @@ Repository: [RGIYER97/personalized_daily_news](https://github.com/RGIYER97/perso
 - **LLM reliability (Gemini + Groq)** — Summaries use [Google Gemini](https://aistudio.google.com/apikey) first, trying current models in order: **Gemini 3 Flash → Gemini 2.5 Flash → Gemini 2.5 Flash-Lite → Gemini 3.1 Flash-Lite** (per [Google’s model list](https://ai.google.dev/gemini-api/docs/models)). **404** skips to the next ID; **429** waits 45s and retries. If all Gemini models fail, it falls back to **[Groq](https://console.groq.com)** (free tier, separate quota): Llama 3.3 / 3.1 / Mixtral. Set `LLM_GEMINI_FIRST=false` to use Groq first. There is a **~25s pause** between the news and stock LLM calls. CI jobs allow **45 minutes** for retries.
 - **Stock watchlist** — Opens with a **market snapshot** (S&P 500, Nasdaq, Dow day performance) and an **earnings calendar** listing any watchlist tickers reporting in the next 3 days. Each ticker then shows price, day %, and YTD %; tickers that moved ≥ 3% on the day also show **52-week high/low context** (e.g. `near 52-wk low`). Price data is cross-checked against yfinance `fast_info` to catch stale or split-adjusted history values. Edit `WATCHLIST_STOCKS` in `config.py`.
 - **Sports desk** — ESPN for yesterday’s results and today’s schedule: Oakland Athletics, New York Mets, Las Vegas Raiders, Sacramento Kings, Los Angeles Lakers, Real Madrid, Formula 1. **Playoff series records** are appended automatically when available (e.g. `Rockets lead series 3-2`).
-- **Free SMS** — Email-to-SMS carrier gateways (no Twilio). Falls back to full email if the message is too long.
 - **GitHub Actions** — Scheduled daily run; no always-on laptop required.
 
 ## Briefing order
@@ -53,7 +52,7 @@ calendar_fetcher.py                  — Apple Calendar via iCloud CalDAV
 llm_client.py                        — Gemini + Groq completion with retries
 news_fetcher.py                      — News + stock headlines, LLM synthesis
 sports_fetcher.py                    — ESPN scores and schedules
-notifier.py                          — SMS gateway + SMTP email
+notifier.py                          — Gmail SMTP email delivery
 config.py                            — Topics, watchlist, sports teams (.env for secrets)
 .env.example                         — Environment template
 .github/workflows/daily-briefing.yml — Cron + manual dispatch
@@ -83,9 +82,7 @@ Edit `.env`:
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/apikey) | Primary summarizer; try with [Groq](https://console.groq.com) if you hit 429s |
 | `GROQ_API_KEY` | [Groq console](https://console.groq.com) | **Free** fallback when Gemini is rate-limited or returns 404 |
 | `LLM_GEMINI_FIRST` | `true` or `false` | Set `false` to call **Groq before Gemini** |
-| `USER_PHONE` | 10-digit US number | e.g. `2125551234` |
-| `USER_CARRIER` | Carrier slug | See table below (`tmobile`, `verizon`, …) |
-| `USER_EMAIL` | Your inbox | Email fallback recipient |
+| `USER_EMAIL` | Your inbox | Briefing recipient |
 | `SMTP_EMAIL` | Gmail used to send | Often same as `USER_EMAIL` |
 | `SMTP_PASSWORD` | [Gmail App Password](https://myaccount.google.com/apppasswords) | Not your normal Gmail login password |
 | `SMTP_HOST` / `SMTP_PORT` | Usually `smtp.gmail.com` / `587` | |
@@ -93,23 +90,6 @@ Edit `.env`:
 | `APPLE_APP_PASSWORD` | App-specific password from [appleid.apple.com](https://appleid.apple.com) | Generate under Security → App-Specific Passwords |
 | `WEATHER_LAT` / `WEATHER_LON` | Latitude / longitude | Optional; defaults to Harrison, NJ (`40.7459` / `-74.1543`) |
 | `WEATHER_CITY_NAME` | Display name for weather line | Optional; defaults to `Harrison, NJ` |
-
-### Supported carriers (Email-to-SMS)
-
-| Carrier | `USER_CARRIER` |
-|---|---|
-| AT&T | `att` |
-| T-Mobile | `tmobile` |
-| Verizon | `verizon` |
-| Sprint | `sprint` |
-| US Cellular | `uscellular` |
-| Boost Mobile | `boost` |
-| Cricket | `cricket` |
-| Metro by T-Mobile | `metro` |
-| Mint Mobile | `mint` |
-| Google Fi | `googlefi` |
-| Xfinity Mobile | `xfinity` |
-| Visible | `visible` |
 
 ### 3. Test locally
 
@@ -131,8 +111,6 @@ Go to your repo → **Settings → Secrets and variables → Actions** and add t
 | `GEMINI_API_KEY` | Gemini key (optional if Groq is set) |
 | `GROQ_API_KEY` | Groq key (recommended when Gemini quota is tight) |
 | `LLM_GEMINI_FIRST` | Optional: `false` to prefer Groq first |
-| `USER_PHONE` | 10-digit number |
-| `USER_CARRIER` | e.g. `tmobile` |
 | `USER_EMAIL` | Your email |
 | `SMTP_EMAIL` | Gmail sender |
 | `SMTP_PASSWORD` | Gmail App Password |
@@ -180,7 +158,7 @@ No WSJ, RSS, or weather-specific secrets are required. Weather works out of the 
 
 1. In cron-job.org, click **Test run** on your new job
 2. Go to GitHub → **Actions** → confirm a new `Daily News Briefing` run appears
-3. Check that SMS or email arrives
+3. Check that the briefing email arrives
 
 The cronjob will now fire daily at your configured time. You can also still trigger manually from the GitHub **Actions → Run workflow** button.
 
@@ -231,9 +209,9 @@ Commit and push when you change this file so GitHub Actions picks up the new lis
 
 Edit `SPORTS_TEAMS`: `name`, `sport`, `espn_slug`, `espn_id`.
 
-## Email-to-SMS
+## Email delivery
 
-Email is sent to `<10-digit>@<carrier-gateway>` (e.g. `2125551234@tmomail.net`). That uses the same Gmail SMTP credentials as fallback email. Messages over ~1500 characters go to `USER_EMAIL` as full email instead.
+The briefing is sent to `USER_EMAIL` using Gmail SMTP. Set `SMTP_EMAIL` to your Gmail address and `SMTP_PASSWORD` to a [Gmail App Password](https://myaccount.google.com/apppasswords) (not your normal login password).
 
 ## Local scheduler (alternative)
 
